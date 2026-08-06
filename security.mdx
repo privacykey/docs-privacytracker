@@ -1,0 +1,318 @@
+---
+title: Security & trust
+description: "What privacytracker protects against, what data leaves your device, the access-control layers, and how to report a vulnerability."
+---
+
+This page is for self-hosters making real deployment decisions, contributors keeping the security posture intact, and security researchers running tests under our coordinated-disclosure policy. Wherever the docs-site version diverges from the canonical Security card on the [privacytracker Plane board](https://sites.plane.so/issues/39b6604351894f09a5e903acce37d265), **the Plane board is the source of truth** and this page mirrors it for discoverability.
+
+<Note>
+  privacytracker is designed as a **single-user, local-first** tool. The threat model assumes one trusted operator running it on hardware they control. If you're putting this in front of multiple untrusted users, you're outside the supported model — see [Runtime and database boundaries](#runtime-and-database-boundaries) below.
+</Note>
+
+## Threat model
+
+What privacytracker protects against:
+
+- **Silent privacy-label changes.** The whole point. Snapshots + diffs + notifications surface when an app's disclosed data collection changes without you noticing.
+- **Cross-origin abuse of the local API.** Same-origin CSRF check on every mutating verb. A malicious tab can't trigger `POST /api/scrape` against your local install.
+- **Casual access to destructive routes when the API is exposed beyond localhost.** The optional `AUDITOR_ADMIN_TOKEN` adds a shared-secret layer on top of CSRF.
+- **Silent ed25519 signature stripping during desktop auto-update.** The Tauri updater verifies every patch's signature before applying it.
+- **Force-include of private annotations in audit-bundle exports.** SQL-level filter at build time; no URL parameter or escape hatch can override it.
+- **Unwitting AI provider exfiltration.** AI is opt-in and disabled by default. When enabled, only privacy-policy text is sent — never app names, your annotations, or telemetry of any kind.
+
+What privacytracker does *not* protect against:
+
+- **A malicious or compromised host machine.** If your laptop is rooted, privacytracker can't protect data inside it. Use full-disk encryption.
+- **A compromised AI provider.** When you enable an AI provider and send privacy-policy text to it, that text leaves your machine. We hash policies and skip re-summarisation when the hash is unchanged, but the content of policies is still visible to whichever provider you chose.
+- **Volumetric DoS or brute-force against a self-hosted instance.** privacytracker has no rate limit of its own. If you expose it to the public internet, put it behind a rate-limiting reverse proxy.
+- **Multi-user separation.** There are no user accounts. Anyone with browser access to your instance has full access to its data.
+- **Physical attacks against your machine.** Out of scope.
+
+## What data leaves your device
+
+Three things, all opt-in or transparent:
+
+<AccordionGroup>
+  <Accordion title="App Store HTML — fetched from apps.apple.com" icon="apple">
+    privacytracker fetches each app's App Store page to read its public privacy labels. This is the same network call your browser makes when you visit `apps.apple.com/.../id<digits>`. The request goes directly from your machine to Apple — no intermediary. No personal data is sent.
+
+    Apple sees the request as coming from your IP address. They presumably log it like any other web request. There is no Apple developer account or API key involved.
+  </Accordion>
+  <Accordion title="Privacy-policy text — fetched from the developer's domain" icon="file-shield">
+    When AI summaries are enabled, privacytracker follows the *Developer's Privacy Policy* link from each app's App Store page and fetches the policy text. The fetcher follows redirects, respects standard `Cache-Control` headers, and does not auto-fill any form fields. The developer's host sees a request from your IP for the URL Apple already publishes on the App Store page.
+
+    The text is hashed (SHA-256) and re-summarisation only happens when the hash changes — so cosmetic edits to a policy don't burn AI calls or re-leak anything.
+  </Accordion>
+  <Accordion title="AI provider calls — only when configured" icon="sparkles">
+    If you've configured an AI provider (OpenAI, Anthropic, or your own local OpenAI-compatible endpoint), privacytracker sends the policy text to that provider as part of summarisation prompts. The provider receives:
+
+    - The policy text (chunked if the provider's `providerLikelyNeedsChunking` flag is set)
+    - The lens prompts (`POLICY_TOPIC_GUIDES` in `lib/privacy-policy.ts`)
+    - Provider-required headers (your API key in the case of OpenAI / Anthropic)
+
+    The provider does *not* receive: app names, bundle IDs, your annotations, your IP-on-the-Internet (assuming standard egress), telemetry, or anything else.
+
+    Local providers (Ollama, llama.cpp, LM Studio, vLLM) keep all of this on your machine.
+  </Accordion>
+</AccordionGroup>
+
+privacytracker has **no analytics, no telemetry, no crash reporting** of its own. The SQLite database, all settings, all your annotations — everything stays on your machine.
+
+## Authentication & access control
+
+Two layers, applied to *destructive* routes only. Read-only endpoints have neither.
+
+### Same-origin CSRF check (always on)
+
+Every mutating verb (`POST`, `PUT`, `PATCH`, `DELETE`) checks that the `Origin` header matches the request host. The check lives in `proxy.ts` and runs before any route handler.
+
+```bash
+curl -X POST http://localhost:3000/api/reset
+# 403 { "error": "origin_mismatch" }
+
+curl -X POST http://localhost:3000/api/reset \
+  -H "Origin: http://localhost:3000"
+# 200
+```
+
+Browser requests from your installed UI satisfy this automatically. Cross-origin or curl-from-a-different-host calls won't unless they set the header explicitly. If you're behind a reverse proxy, the proxy must forward the original `Host` header — see [Troubleshooting → Reverse-proxy CSRF rejection](/troubleshooting#reverse-proxy-csrf-rejection).
+
+### Admin token (optional, opt-in)
+
+When you set `AUDITOR_ADMIN_TOKEN` in the environment, *destructive* routes (`POST /api/reset`, `DELETE /api/apps`, `POST /api/settings`, `DELETE /api/wayback/import-all`, etc.) require an `X-Auditor-Admin-Token` header on top of the CSRF check.
+
+```bash
+export AUDITOR_ADMIN_TOKEN=$(openssl rand -hex 32)
+# ... start privacytracker with this in the environment ...
+
+curl -X POST http://localhost:3000/api/reset \
+  -H "Origin: http://localhost:3000" \
+  -H "X-Auditor-Admin-Token: $AUDITOR_ADMIN_TOKEN"
+```
+
+Verification uses **`crypto.timingSafeEqual`** so token comparison runs in constant time regardless of where the first byte differs. This rules out timing oracles even on a fast LAN.
+
+The token is purely opt-in — there's no built-in user/account system in privacytracker. Use it when the app is exposed beyond a single-user trusted boundary (e.g., self-hosted on a LAN where multiple devices can reach it).
+
+<Tip>
+  Generate a token with `openssl rand -hex 32`. Store it like any other secret — never commit it, never paste it into a public log.
+</Tip>
+
+### Audit log
+
+Every failed admin-token attempt (and a handful of other security-relevant events) is appended to the `audit_log` table:
+
+| Column | Contents |
+|---|---|
+| `id` | autoincrement |
+| `at` | Unix timestamp (ms) |
+| `event` | event code (`admin_token_failed`, `admin_token_succeeded`, `reset_invoked`, `bundle_restored`, `bundle_exported`, etc.) |
+| `ip` | requester IP (from `x-forwarded-for` if behind a proxy, else direct) |
+| `user_agent` | the `User-Agent` header verbatim |
+| `details` | JSON blob with route + non-sensitive context |
+
+The table is **append-only** by convention — no API route writes a `DELETE` against it, and the schema has no `deleted_at` column. If you want to prune it for storage, drop and recreate manually with the app stopped.
+
+Review it from the UI under **Settings → Diagnostics → Audit log**, or directly:
+
+```bash
+sqlite3 data/privacy.db "SELECT datetime(at/1000, 'unixepoch'), event, ip FROM audit_log ORDER BY at DESC LIMIT 50;"
+```
+
+## Cryptographic primitives
+
+| Use | Primitive | Where |
+|---|---|---|
+| Admin-token verification | `crypto.timingSafeEqual` (Node native) | `proxy.ts` |
+| Privacy-policy version hashing | SHA-256 | `lib/privacy-policy.ts` |
+| Desktop-app auto-update verification | ed25519 signature on every patch | Tauri updater |
+| Backup-bundle integrity | none today (versioned JSON only) | `lib/audit-bundle.ts` |
+
+Backup bundles are intentionally unencrypted JSON so they're inspectable and recoverable without tooling. Treat them as sensitive data and share via channels you'd use for any other personal file — see [Audit-bundle export threat model](#audit-bundle-export-threat-model) below.
+
+## Verifying signed binaries
+
+The desktop app builds we publish on GitHub releases are:
+
+1. Signed with a Developer ID certificate
+2. Notarized by Apple
+3. Verified at install time by Gatekeeper
+4. Re-verified on every auto-update by Tauri's ed25519 check before the patch is applied
+
+You can verify the signature manually:
+
+```bash
+codesign --verify --deep --strict --verbose=2 /Applications/privacytracker.app
+spctl --assess --verbose=4 --type execute /Applications/privacytracker.app
+```
+
+To verify the build matches source, [build from source](/develop/build-from-source) and compare the resulting bundle. The build is reproducible up to timestamp metadata; the unsigned `.app` bundle should match byte-for-byte modulo the signing payload.
+
+## Audit-bundle export threat model
+
+The `audience: loved_one` workflow lets users export an audit bundle — a JSON file describing tracked apps, their privacy labels, AI summaries, and exportable annotations. Bundles can also include the privacy profile you assessed against, with an opt-out checkbox in the export dialog.
+
+**What's included** (when you click Export):
+
+- Tracked apps + their full privacy disclosure (categories, identifiers, policy text excerpt, AI summary, accessibility features)
+- Annotations marked `visibility = 'export'` only
+- Optionally: your privacy profile (the tolerances you set for data collection, sharing, retention, etc.)
+
+**What's never included:**
+
+- Notes flagged `visibility = 'private'` — unconditionally excluded by SQL filter at build time. There is no force-include URL parameter or escape hatch.
+- Your audience or goal selections — the recipient picks their own.
+- Your flag overrides, AI provider configuration, or AI keys.
+- Notification preferences, sync schedule, or any other personal settings.
+
+**Threat model.** Bundles are unencrypted JSON. Treat them like a personal email: once you share the file, the recipient can open it indefinitely, and there is no revocation mechanism. We deliberately avoided shipping any centralised revocation list — that would contradict the local-first design — so the recommended sharing channels are ones you already trust for personal data: encrypted messaging (Signal, iMessage), end-to-end-encrypted email, or direct file transfer between devices on your local network. **Avoid pasting the contents into public-facing tools** (issue trackers, chat rooms, AI assistants).
+
+When a recipient imports a bundle, they see your annotations attributed to your name (the free-text field captured at export time, or *"your friend"* if blank). They can edit or delete their own copy of those notes after import; this does not affect the original on your device. The bundle's `version` field guards against schema mismatches — newer bundles refuse to import into older app versions with a clear error rather than silently misparsing.
+
+<Warning>
+  If you find a way to surface private (`visibility = 'private'`) notes in an exported bundle, that's a security issue and we want to hear about it through the [reporting process](#reporting-a-vulnerability) below.
+</Warning>
+
+## Runtime and database boundaries
+
+privacytracker is designed as a single-user, local-first tool. **Run only one runtime against a given SQLite database at a time** — a Docker/Node process, *or* the desktop sidecar, not both sharing the same `privacy.db`. SQLite WAL mode handles ordinary contention inside one process, but two app processes writing the same database is outside the supported security and data-integrity model.
+
+If you want to run multiple instances (e.g., one per family member), use **separate `data/` directories** per instance.
+
+## Supported versions
+
+Security fixes are applied to the **`main` branch only**. There is no long-term-support branch. If you're running privacytracker in production, track the latest Docker image (or the latest commit on `main`) so you receive fixes as soon as they ship.
+
+| Version | Supported |
+|---|---|
+| `main` (latest) | Yes |
+| Older commits / tagged releases | No |
+
+## Reporting a vulnerability
+
+**Please do not open a public GitHub issue, Discussion, or pull request for anything security-sensitive.** Once a vulnerability is visible in a public thread it's effectively disclosed to attackers too. Use one of the two private channels below.
+
+<CardGroup cols={2}>
+  <Card title="GitHub Private Vulnerability Reporting" icon="shield-halved" href="https://github.com/privacykey/privacytracker/security/advisories/new">
+    **Preferred.** Keeps the entire conversation inside the repo but hidden from the public until we publish an advisory. Threads directly into our triage workflow; when a fix ships, GitHub can request a CVE on your behalf.
+  </Card>
+  <Card title="Encrypted email (once the key is published)" icon="envelope">
+    The PGP key for `security@privacykey.org` isn't published yet. Until `.github/security-pgp.asc` and its fingerprint land in the repo, please use GitHub Private Vulnerability Reporting. If you can't use GitHub, open an advisory with minimal detail and ask us to coordinate another secure channel from there.
+
+    **Do not** send sensitive vulnerability details by plaintext email.
+  </Card>
+</CardGroup>
+
+### What to include
+
+The more of the following you can share up front, the faster we can reproduce the issue and ship a fix:
+
+- The affected version or commit (`git rev-parse --short HEAD`, or your Docker image tag / digest).
+- A clear description of the vulnerability and the impact if exploited (who gets what access, what data leaks, what can be modified).
+- Reliable reproduction steps — ideally a minimal proof-of-concept (`curl` command, repro script, or short written walkthrough).
+- Any logs, HTTP captures, or screenshots that show the issue.
+- Whether you've disclosed the issue anywhere else (and to whom).
+- How you'd like to be credited — name, handle, affiliation, or *anonymous*.
+
+### Our response
+
+privacytracker is maintained by a small team, so we **can't commit to a strict SLA**, but we aim to:
+
+- **Acknowledge** every report as soon as practical after receiving it.
+- **Keep you updated** as we triage, reproduce, and work on a fix — even if that update is *"still investigating, no news yet"*.
+- **Coordinate the disclosure timeline** with you. Ninety days is a reasonable default; we're happy to move faster on clear-cut issues and ask for more time on ones that need a deeper refactor. Active exploitation in the wild changes the math — tell us if you see it.
+- **Credit you** in the fix commit, release notes, and the GitHub advisory, unless you ask to stay anonymous.
+
+If you haven't heard back from us and feel like you're being ignored, escalate by pinging the same channel — replies sometimes end up in spam, and advisory notifications can get lost behind a busy inbox.
+
+## Safe harbor
+
+We consider security research conducted under this policy to be **authorised activity**. If you act in good faith and follow the rules below, we will not:
+
+- Pursue or support any legal action against you;
+- Cooperate with law enforcement requests targeting you for the research;
+- Ask your hosting provider or network to take action against you.
+
+To stay within safe harbor:
+
+<Steps>
+  <Step title="Report privately first">
+    Report the vulnerability through one of the channels above **before** disclosing it publicly or to any third party.
+  </Step>
+  <Step title="Test only your own deployments">
+    Test against deployments you own or have explicit permission to test. Don't probe another user's self-hosted privacytracker instance without consent.
+  </Step>
+  <Step title="Avoid collateral damage">
+    Avoid privacy violations (don't access data you don't need to prove the issue), destruction of data, and disruption of service. If a proof-of-concept would require any of these, stop and describe the issue to us instead.
+  </Step>
+  <Step title="Give us a fix window">
+    Give us a reasonable opportunity to fix the issue before you publish.
+  </Step>
+</Steps>
+
+This policy follows the spirit of [disclose.io](https://disclose.io). If another policy we agree to in writing conflicts with this one, the written agreement takes precedence.
+
+## Scope
+
+privacytracker ships as source in the main repository and as a Docker image. **In scope** for security reports:
+
+- The Next.js web application (`app/`, `lib/`, `components/`).
+- The HTTP API surface (`app/api/**`).
+- The companion Python CLI (`tools/ios-app-import/`).
+- The official Docker image and the reference `docker-compose.yml`.
+- The default configuration shipped in this repo — including the database schema in `lib/db.ts`, the scraping logic in `lib/scraper.ts`, and the AI-provider request flow in `lib/ai-config.ts`.
+- Exposure of locally-stored secrets (AI provider keys, session data) via the web UI or API.
+
+**Out of scope:**
+
+<AccordionGroup>
+  <Accordion title="Third-party services we integrate with" icon="cloud">
+    Vulnerabilities in Apple's App Store, `archive.org`, the iTunes Search API, or your chosen AI provider (OpenAI, Anthropic, Ollama, etc.) — please report those to the relevant vendor.
+
+    We're still interested in cases where our *handling* of a third-party response is unsafe — e.g., a parser bug that lets a malicious response execute code on the host.
+  </Accordion>
+  <Accordion title="Social engineering, physical attacks, DoS" icon="user-secret">
+    Social engineering of maintainers or contributors, physical attacks against a user's own machine, and volumetric DoS or brute-force against a user's own local deployment are out of scope.
+  </Accordion>
+  <Accordion title="User-introduced misconfiguration" icon="screwdriver-wrench">
+    Issues that require the user to install a malicious browser extension, run arbitrary untrusted code on their own machine, or intentionally misconfigure their own deployment.
+  </Accordion>
+  <Accordion title="Best-practice findings without concrete impact" icon="list-check">
+    Missing HSTS header on localhost, verbose error messages in dev mode, outdated non-exploitable dependencies flagged by a scanner, etc. You're welcome to open a normal GitHub issue for these.
+  </Accordion>
+</AccordionGroup>
+
+If you're unsure whether something is in scope, **report it anyway** — we'd rather hear about it and tell you it's out of scope than miss something real.
+
+## Known transitive advisories with no shipping impact
+
+Some Dependabot advisories surface against transitive Rust dependencies that sit deep in Tauri's gtk stack on Linux. We don't ship a Linux desktop build (the only Tauri targets compiled in CI are `aarch64-apple-darwin` and `x86_64-apple-darwin`), so the vulnerable code paths never compile into released binaries. We track these here so reviewers can confirm the *no actionable fix* status without re-deriving it each time Dependabot re-flags them.
+
+<AccordionGroup>
+  <Accordion title="glib 0.18.5 — VariantStrIter Iterator/DoubleEndedIterator unsoundness">
+    **Advisory:** RUSTSEC-2025-* / GHSA-h22v-69rx-mc8w (severity: Moderate).
+
+    **Vulnerable code path:** Linux gtk3 webview only. `glib` is a transitive dependency of `wry` → `webkit2gtk-rs` → `gtk-rs`. Our `Cargo.toml` does not depend on `glib` directly; the macOS / Windows builds compile a different webview backend (WKWebView / WebView2) that doesn't link against `glib`.
+
+    **Why no in-tree fix:** The `glib` 0.18.x line was abandoned at `0.18.5` with no `0.18.6` patch release. The fix exists in `0.20.10+` and `0.21.x`, but `wry` still pins `gtk = "^0.18"`, which transitively forces `glib 0.18.x`. Bumping requires `wry` (and through it `tauri`) to advance its gtk stack — outside our control.
+
+    **Mitigation in our build:** None needed. The macOS bundles compiled by `.github/workflows/macos-release.yml` don't link `glib`; the Linux Docker image builds the Next.js web app only, which is a pure JavaScript runtime with no Rust components.
+  </Accordion>
+  <Accordion title="rand 0.9.4 — unsoundness when a custom logger uses rand::rng()">
+    **Advisory:** RUSTSEC-2025-* / GHSA-* (severity: Low).
+
+    **Vulnerable code path:** Triggered only when application code calls `rand::rng()` while a user-supplied global logger is installed. We don't depend on `rand` directly; it's pulled in transitively by Tauri internals that don't take application-level loggers.
+
+    **Why no in-tree fix:** `rand 0.9.4` is the latest published version (next semver-compatible release would be `0.9.5+`, not yet on crates.io). Once a patched `0.9.5` ships, Dependabot will open a `Cargo.lock`-only PR; merging that PR is the fix.
+
+    **Mitigation in our build:** We don't install a custom `log` subscriber that uses `rand::rng()` from inside its `log` callback. `tauri-plugin-log` is the single owner of the `log` facade subscriber and uses its own filesystem appender — no rand involvement.
+  </Accordion>
+</AccordionGroup>
+
+When the upstream patches above land, Dependabot's auto-PRs to `Cargo.lock` are the canonical fix; merge them on the next maintenance cycle. Do **not** fork `Cargo.lock` to edit version strings by hand — the checksums are content-addressed and any drift will fail `cargo verify`.
+
+## Hall of fame
+
+Thanks to the researchers who help improve privacytracker's security. With each researcher's permission, names are listed here alongside the report that earned them a place.
+
+*No entries yet.*

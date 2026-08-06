@@ -1,0 +1,126 @@
+---
+title: Translations
+description: "Crowdin + next-intl workflow — how strings flow from en.json to every other locale."
+---
+
+privacytracker's UI is translated through [Crowdin](https://crowdin.com) using their free OSS plan. `locales/en.json` is the source of truth; every other `locales/<lang>.json` is round-tripped through Crowdin so non-developer translators can review and edit copy in a friendly UI without touching JSON by hand.
+
+## High-level loop
+
+```
+            ┌──────────────────┐
+   en.json  │ developer commit │
+   edited ──┤   to main        │
+            │  (CI: upload)    │
+            └────────┬─────────┘
+                     │
+                     ▼
+            ┌──────────────────┐
+            │  Crowdin project │ ◀──  translators edit here
+            │  (web UI)        │      with screenshots + glossary
+            └────────┬─────────┘
+                     │
+            weekly cron / manual dispatch
+                     │
+                     ▼
+            ┌──────────────────┐
+            │  CI opens PR     │
+            │  l10n_main →     │
+            │  main            │ ──▶ developer reviews & merges
+            └──────────────────┘
+```
+
+## One-time setup (project owner only)
+
+<Steps>
+  <Step title="Create the Crowdin project">
+    Sign up at [crowdin.com](https://crowdin.com) (free for open-source projects). Create a new project. Source language: **English**. Target language(s): **Simplified Chinese** and any others you plan to support.
+
+    Project Settings → File format defaults: keep "Use Crowdin's placeholder syntax: yes" so `{count, plural, …}` is validated automatically.
+  </Step>
+  <Step title="Find your project ID">
+    Open your project in Crowdin. The URL contains the slug; Settings → API shows the numeric Project ID.
+  </Step>
+  <Step title="Generate a personal token">
+    Account Settings → API → New Token. Scopes: **Project** (read+write). Save the token somewhere secure — Crowdin shows it once.
+  </Step>
+  <Step title="Add repo secrets">
+    GitHub repo → Settings → Secrets and variables → Actions:
+
+    - `CROWDIN_PROJECT_ID` — the numeric ID from step 2.
+    - `CROWDIN_PERSONAL_TOKEN` — the token from step 3.
+  </Step>
+  <Step title="First push of en.json">
+    Either trigger the workflow manually (Actions → Crowdin → Run workflow), or push a no-op edit to `locales/en.json` on `main`. Either way, `crowdin/github-action` uploads the source bundle on first run. In the Crowdin UI you should now see `locales/en.json` with all keys ready to translate.
+  </Step>
+</Steps>
+
+## Day-to-day (developer)
+
+When you add or rename a string in code:
+
+<Steps>
+  <Step title="Edit en.json (and optionally other locales)">
+    Edit `locales/en.json`. You can also update `locales/zh.json` with a placeholder you want — Crowdin will re-flag it as `unapproved` so the translator re-checks it, but having a value avoids leaking the English fallback into zh in the meantime.
+  </Step>
+  <Step title="Run the parity check">
+    ```bash
+    npm run lint:i18n
+    ```
+
+    The script exits non-zero with a sorted per-namespace diff if any target locale is missing or has extra keys.
+  </Step>
+  <Step title="Commit + push">
+    The Crowdin GitHub Action picks up the change to `locales/en.json` and uploads it the next time `main` advances.
+  </Step>
+</Steps>
+
+## Day-to-day (translator)
+
+1. Open the Crowdin project.
+2. Pick the file (`locales/en.json`) and target language (e.g. `zh-CN`).
+3. Translate strings; use the in-line preview, glossary, and screenshot context where available.
+4. **Approve** entries you're confident about. Anything left `unapproved` is still pulled into the PR but flagged in the diff so developers know it's a draft.
+
+## When translations land back
+
+The workflow opens a PR titled `i18n: new translations from Crowdin` into the `l10n_main` branch every Monday at 08:00 UTC (and on manual dispatch). To merge:
+
+```bash
+npm run lint:i18n
+npm run lint
+npm run typecheck
+```
+
+If the PR adds a new language, also create an empty `locales/<new-lang>.json` placeholder if Crowdin hasn't already added one — next-intl needs the file to exist before its dynamic import resolves. Then squash-merge.
+
+## Adding a new locale
+
+<Steps>
+  <Step title="Add it in Crowdin">
+    Project Settings → Target Languages → add the language. Wait for the Crowdin workflow to upload the source again so the language appears in the project tree.
+  </Step>
+  <Step title="Update crowdin.yml mapping">
+    `crowdin.yml` → `languages_mapping.two_letters_code`: add the row if Crowdin's ID doesn't match your bundle filename (e.g. `pt-BR: pt-br` for `pt-br.json`; nothing needed for plain `es: es`).
+  </Step>
+  <Step title="Update next-intl config">
+    Add the new locale to the supported list in `i18n.ts` so the bundle gets loaded. The route tree is flat — there's no `[locale]` URL segment; the active locale is selected at render time from app settings.
+  </Step>
+  <Step title="Drop a placeholder JSON">
+    `locales/<new>.json` containing `{}` so the first build succeeds before Crowdin populates it.
+  </Step>
+  <Step title="Trigger the workflow">
+    Manually run the Crowdin workflow (or wait for the next scheduled run) — translations flow back as a PR.
+  </Step>
+</Steps>
+
+## Why this layout
+
+- **One flat JSON per locale** — what next-intl expects natively. No build-time merge step, no per-page chunking that would break `useTranslations('foo.bar')` lookups.
+- **Crowdin (vs Tolgee / Weblate / Lokalise)** — Crowdin Free fits OSS, has native ICU MessageFormat validation, supports branched translation flows, and the GitHub Action is mature.
+- **`update_as_unapproved`** — when an English string changes, the paired translation isn't silently kept. Translators see it as unapproved next time they open Crowdin.
+- **Weekly pull (not on-push)** — translations get a coherent batch. An on-push pull cycle would generate dozens of half-translated PRs during active development.
+
+## ICU placeholders
+
+Don't strip braces or rename placeholders without coordinating across both bundles — Crowdin validates them on upload and next-intl validates them at render. Brand names (privacytracker, App Store, Apple Configurator, ToS;DR, PrivacySpy) stay in English in every locale; they're proper nouns.

@@ -1,0 +1,2344 @@
+openapi: 3.1.0
+info:
+  title: privacytracker API
+  version: "1.1.0"
+  description: |
+    HTTP API for [privacytracker](https://github.com/privacykey/privacytracker) —
+    the routes under `app/api/**`. Each route is a thin wrapper over helpers in
+    `lib/`. Mutating routes are protected by a same-origin CSRF check and may
+    require an `X-Auditor-Admin-Token` header when `AUDITOR_ADMIN_TOKEN` is
+    configured.
+
+    This spec covers the public-contract surface — the routes integrators most
+    commonly hit. The full route map (including dev-only and internal routes) is
+    on the [Overview page](/api-reference/introduction).
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+  contact:
+    name: GitHub Issues
+    url: https://github.com/privacykey/privacytracker/issues
+
+servers:
+  - url: http://localhost:3000
+    description: Local development / self-hosted
+
+tags:
+  - name: Apps
+    description: Tracked iOS applications and their privacy labels.
+  - name: Manual apps
+    description: Apps tracked manually rather than via App Store scrape.
+  - name: Search
+    description: Resolve app names through the iTunes Search API.
+  - name: Scrape
+    description: Trigger App Store privacy-label scrapes.
+  - name: Changelog
+    description: Snapshot history and change events.
+  - name: Compare
+    description: Side-by-side comparison and related-app suggestions.
+  - name: Stats
+    description: Dashboard charts (privacy matrix, radar, timeline).
+  - name: Annotations
+    description: Per-app freeform notes with tags and visibility.
+  - name: Verdicts
+    description: Categorical per-app judgements (`tracking_concern`, `acceptable`, …).
+  - name: Notifications
+    description: Bell-feed events and per-type notification preferences.
+  - name: Activity
+    description: Append-only activity log (sync events, migrations, exports).
+  - name: Backup
+    description: Export, preview, restore versioned data bundles.
+  - name: Import / export
+    description: Audit bundles, CSV/JSON dumps, import queues.
+  - name: Privacy policy
+    description: Developer privacy-policy fetching, hashing, and AI summarisation.
+  - name: AI
+    description: Provider config testing, model discovery, debug log.
+  - name: Focus & flags
+    description: Audience / goals state plus feature-flag overrides.
+  - name: Profile & preferences
+    description: Privacy profile, accessibility profile, locale, date format, coachmarks.
+  - name: Tasks
+    description: Bulk runner status (sync / wayback / policy).
+  - name: Settings
+    description: General application settings and desktop-only settings.
+  - name: Deployment
+    description: Diagnostics + support bundle for self-hosted instances.
+  - name: Health
+    description: Liveness and readiness probes.
+  - name: Admin
+    description: Destructive admin routes (reset, start-over). Always require both auth layers.
+
+security:
+  - {}
+  - sameOrigin: []
+  - adminToken: []
+
+components:
+  securitySchemes:
+    sameOrigin:
+      type: apiKey
+      in: header
+      name: Origin
+      description: |
+        Same-origin CSRF check. The `Origin` header must match the request host;
+        enforced for every mutating verb (`POST`, `PUT`, `PATCH`, `DELETE`).
+    adminToken:
+      type: apiKey
+      in: header
+      name: X-Auditor-Admin-Token
+      description: |
+        Required when `AUDITOR_ADMIN_TOKEN` is set in the environment. Verified
+        with `crypto.timingSafeEqual`. Failed attempts are recorded in
+        `audit_log` with IP + user agent.
+
+  schemas:
+    ErrorCode:
+      type: string
+      description: |
+        Stable, machine-readable error code returned in `{ "error": "<code>" }`.
+        New codes may be added in minor releases; existing codes don't change
+        meaning. Integrators should `switch` on this rather than parsing
+        `details`, which is human-prose and not stable.
+      enum:
+        - origin_mismatch          # CSRF check failed (Origin != Host)
+        - admin_token_required     # AUDITOR_ADMIN_TOKEN configured, header missing
+        - admin_token_invalid      # X-Auditor-Admin-Token didn't match (timingSafeEqual)
+        - confirm_required         # mutating route needs ?confirm=<value>
+        - already_running          # mutex held by another in-flight run
+        - rate_limited             # Apple returned 429; runner backed off
+        - not_found                # resource doesn't exist (app id, version id, etc.)
+        - invalid_request          # malformed body or query
+        - schema_mismatch          # bundle version newer than app version
+        - migration_failed         # boot-time migration step failed
+        - provider_unconfigured    # AI provider needed but not set
+        - provider_unreachable     # AI provider didn't respond before timeout
+        - upstream_unavailable     # apps.apple.com / archive.org / iTunes Search unreachable
+        - parser_failed            # App Store HTML didn't match any known shape
+        - quarantined              # focus / override row references a removed feature flag
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorCode"
+        details:
+          type: string
+          nullable: true
+          description: Human-readable detail. Not stable across releases. Useful for logging, not for branching.
+
+    App:
+      type: object
+      required: [id, name, url, changeCount]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Apple track ID extracted from `/id<digits>/` in the App Store URL.
+          example: 324684580
+        name:
+          type: string
+          example: Spotify - Music and Podcasts
+        bundleId:
+          type: string
+          nullable: true
+          example: com.spotify.client
+        developer:
+          type: string
+          nullable: true
+          example: Spotify Ltd.
+        url:
+          type: string
+          format: uri
+          example: https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580
+        privacyPolicyUrl:
+          type: string
+          format: uri
+          nullable: true
+        firstSeen:
+          type: integer
+          format: int64
+          description: Unix timestamp (ms) of first scrape.
+        changeCount:
+          type: integer
+          description: Unacknowledged change events. Drives the bell badge.
+          example: 2
+
+    AppsPage:
+      type: object
+      description: |
+        Paginated envelope returned by `GET /api/apps` when `limit` is
+        supplied. Added in the large-fleet pagination work; the bare-array
+        form remains the default when `limit` is absent.
+      required: [apps, total, limit, offset]
+      properties:
+        apps:
+          type: array
+          items:
+            $ref: "#/components/schemas/App"
+        total:
+          type: integer
+          description: Total tracked apps in the fleet (not just this page).
+          example: 5000
+        limit:
+          type: integer
+          example: 500
+        offset:
+          type: integer
+          example: 0
+        meta:
+          type: object
+          description: |
+            Present only when `meta=grid` was requested. Per-app side-band
+            maps keyed by app id, scoped to this page's apps — an absent key
+            means "no data" (no badge / undecided / no pending changes / no
+            device links).
+          properties:
+            profileBadges:
+              type: object
+              additionalProperties: true
+              description: appId → privacy-profile match badge.
+            pendingChangeCategoriesByApp:
+              type: object
+              additionalProperties: true
+              description: "appId → { privacy, accessibility, policy } booleans."
+            userVerdicts:
+              type: object
+              additionalProperties:
+                type: string
+                enum: [safe, replace, uninstall]
+              description: appId → the user's own verdict.
+            appDeviceMap:
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string
+              description: appId → linked device ids.
+
+    PrivacyType:
+      type: object
+      required: [name, categories]
+      properties:
+        name:
+          type: string
+          example: Data Linked to You
+        categories:
+          type: array
+          items:
+            $ref: "#/components/schemas/PrivacyCategory"
+
+    PrivacyCategory:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: Location
+        purposes:
+          type: array
+          items:
+            type: string
+          example: [Analytics, App Functionality]
+
+    SearchResult:
+      type: object
+      required: [trackId, trackName, sellerName, artworkUrl, url]
+      properties:
+        trackId:
+          type: integer
+          format: int64
+        trackName:
+          type: string
+        sellerName:
+          type: string
+        bundleId:
+          type: string
+          nullable: true
+        artworkUrl:
+          type: string
+          format: uri
+        url:
+          type: string
+          format: uri
+
+    ScrapeRequest:
+      type: object
+      required: [urls]
+      properties:
+        urls:
+          type: array
+          items:
+            type: string
+            format: uri
+          example:
+            - https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580
+        resync:
+          type: boolean
+          default: false
+          description: Re-scrape an app already in the database (produces change notifications).
+
+    ScrapeResult:
+      type: object
+      required: [scraped, errors]
+      properties:
+        scraped:
+          type: array
+          items:
+            $ref: "#/components/schemas/App"
+        errors:
+          type: array
+          items:
+            type: object
+            required: [url, error]
+            properties:
+              url:
+                type: string
+                format: uri
+              error:
+                type: string
+
+    ChangelogRow:
+      type: object
+      required: [appId, scrapedAt, changes, source]
+      properties:
+        appId:
+          type: integer
+          format: int64
+        scrapedAt:
+          type: integer
+          format: int64
+          description: Unix timestamp (ms).
+        source:
+          type: string
+          enum: [live, wayback]
+        triggered_by:
+          type: string
+          nullable: true
+          enum: [scheduled, manual, import, wayback, null]
+        wayback_snapshot_url:
+          type: string
+          format: uri
+          nullable: true
+        matches_live_sync:
+          type: boolean
+        changes:
+          type: array
+          items:
+            type: object
+            required: [kind]
+            properties:
+              kind:
+                type: string
+                enum: [category_added, category_removed, severity_changed]
+              category:
+                type: string
+              from:
+                type: string
+                nullable: true
+              to:
+                type: string
+                nullable: true
+
+    BackupBundle:
+      type: object
+      description: |
+        Versioned export of every app, label, snapshot, annotation,
+        notification, focus state, and feature-flag override. Restorable into
+        the same or a later version of privacytracker.
+      properties:
+        version:
+          type: string
+          example: "1.1.0"
+        exportedAt:
+          type: integer
+          format: int64
+        apps:
+          type: array
+          items:
+            $ref: "#/components/schemas/App"
+        # Other top-level keys (snapshots, annotations, notifications, settings,
+        # feature_flag_overrides) are stable shapes documented in lib/audit-bundle.ts
+        # but elided here for brevity.
+
+    TasksActive:
+      type: object
+      required: [wayback, sync, policy]
+      properties:
+        wayback:
+          $ref: "#/components/schemas/BulkRunnerStatus"
+        sync:
+          $ref: "#/components/schemas/BulkRunnerStatus"
+        policy:
+          $ref: "#/components/schemas/BulkRunnerStatus"
+
+    BulkRunnerStatus:
+      type: object
+      required: [running]
+      properties:
+        running:
+          type: boolean
+        initiator:
+          type: string
+          nullable: true
+          enum: [manual, scheduled, resume, null]
+        currentAppName:
+          type: string
+          nullable: true
+        runId:
+          type: string
+          nullable: true
+        summary:
+          type: object
+          nullable: true
+          properties:
+            total:
+              type: integer
+            completed:
+              type: integer
+            failed:
+              type: integer
+            skipped:
+              type: integer
+
+    HealthResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          example: true
+
+    ReadyResponse:
+      type: object
+      required: [ok, db, data]
+      properties:
+        ok:
+          type: boolean
+        db:
+          type: string
+          enum: [reachable, unreachable]
+        data:
+          type: string
+          enum: [writable, "not writable"]
+
+    ManualApp:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          description: Locally-generated identifier (UUID).
+          example: 3d6f0c8c-9b6e-4a78-9c3d-1d5b9c8e3a02
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+          nullable: true
+        privacyPolicyUrl:
+          type: string
+          format: uri
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+
+    Annotation:
+      type: object
+      required: [id, appId, body, visibility, tag, updatedAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        appId:
+          type: integer
+          format: int64
+        body:
+          type: string
+          description: Markdown.
+        tag:
+          type: string
+          enum: [concern, positive, follow_up, other]
+        visibility:
+          type: string
+          enum: [export, private]
+          description: Notes flagged `private` are unconditionally excluded from audit-bundle exports.
+        updatedAt:
+          type: integer
+          format: int64
+        deletedAt:
+          type: integer
+          format: int64
+          nullable: true
+          description: Set during the 30-second soft-delete window; null if active.
+
+    Verdict:
+      type: object
+      required: [appId, kind, updatedAt]
+      properties:
+        appId:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          enum: [tracking_concern, acceptable, do_not_install]
+        reason:
+          type: string
+          nullable: true
+        updatedAt:
+          type: integer
+          format: int64
+
+    Notification:
+      type: object
+      required: [id, kind, appId, createdAt, read]
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          enum:
+            - app_changed
+            - sync_resumed
+            - wayback_resumed
+            - policy_resumed
+            - sync_stale_cleared
+            - wayback_stale_cleared
+            - policy_stale_cleared
+        appId:
+          type: integer
+          format: int64
+          nullable: true
+          description: Null for cross-cutting events (resume notifications use synthetic ids like `__sync_resume__`).
+        createdAt:
+          type: integer
+          format: int64
+        read:
+          type: boolean
+        title:
+          type: string
+        body:
+          type: string
+
+    NotificationPrefs:
+      type: object
+      additionalProperties:
+        type: boolean
+      description: |
+        Map of notification type → enabled. Keys mirror the `Notification.kind`
+        enum. Migrated in v1.1 from a single JSON blob in `app_settings`.
+
+    Focus:
+      type: object
+      required: [audience, goals]
+      properties:
+        audience:
+          type: string
+          enum: [self, loved_one, guardian]
+        goals:
+          type: object
+          properties:
+            understand:
+              type: boolean
+            declutter:
+              type: boolean
+            minimal:
+              type: boolean
+              description: Mutually exclusive with `understand` and `declutter`.
+            accessibility:
+              type: boolean
+              description: Modifier — combines with any primary goal.
+
+    FeatureFlagsSnapshot:
+      type: object
+      additionalProperties:
+        type: string
+        enum: [on, off, collapsed]
+      description: |
+        Resolved values for every flag the current build knows about. Keys follow
+        `flag.<surface>.<area>.<feature>`; values are the resolution after
+        hard-default → audience → goals → accessibility → runtime → override.
+
+    PrivacyProfile:
+      type: object
+      description: Tolerances the user has set for data collection, sharing, retention, etc. Shape lives in the source.
+      additionalProperties: true
+
+    AccessibilityProfile:
+      type: object
+      description: Per-user accessibility preferences (high contrast, reduced motion, etc.).
+      additionalProperties: true
+
+    Preferences:
+      type: object
+      description: General per-user preferences not covered by focus or profiles.
+      additionalProperties: true
+
+    StatsResponse:
+      type: object
+      description: |
+        Shape varies per stats endpoint (`/api/stats/matrix`, `/api/stats/radar`,
+        `/api/stats/timeline`). Each is a typed payload consumed by the matching
+        chart component in `app/components/charts/`.
+      additionalProperties: true
+
+    ActivityRow:
+      type: object
+      required: [id, kind, at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          example: sync_completed
+        at:
+          type: integer
+          format: int64
+        appId:
+          type: integer
+          format: int64
+          nullable: true
+        details:
+          type: object
+          additionalProperties: true
+
+    AuditBundle:
+      type: object
+      description: |
+        Curated export for sharing apps + labels + AI summaries + exportable
+        annotations. Private notes (`visibility = 'private'`) are excluded by
+        SQL filter at build time. Recipient imports via
+        `POST /api/import/audit-bundle`. See [Security & trust → Audit-bundle
+        export threat model](/security#audit-bundle-export-threat-model).
+      additionalProperties: true
+
+    BackupSnapshotsConfig:
+      type: object
+      properties:
+        cadence:
+          type: string
+          enum: [off, daily, weekly, monthly]
+        retention:
+          type: integer
+          minimum: 1
+          maximum: 30
+          description: How many recent snapshots to keep.
+
+    DeploymentDiagnostics:
+      type: object
+      description: |
+        Safe-to-share deployment diagnostics — privacytracker version, Node
+        version, OS, DB path, schema version, sync state, mutex states. Never
+        includes annotations, AI keys, or app names.
+      additionalProperties: true
+
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      description: "Returns 200 with `{ ok: true }` whenever the process is responding. Used for cheap uptime checks."
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/ready:
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      description: |
+        Returns 200 with `{ ok: true }` only when the database is reachable
+        **and** the data directory is writable. Used by container healthchecks
+        and reverse-proxy readiness gates.
+      responses:
+        "200":
+          description: Healthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "503":
+          description: Not ready (DB unreachable or data dir not writable).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+
+  /api/apps:
+    get:
+      tags: [Apps]
+      summary: List tracked apps
+      description: |
+        Without `limit`, returns the complete fleet as a bare JSON array —
+        the legacy form, kept stable for existing consumers. Its response
+        size grows linearly with the fleet (~0.7 KB per app), so for
+        installs tracking more than ~1,000 apps prefer the paginated form:
+        the presence of `limit` switches the response to an
+        `{ apps, total, limit, offset }` envelope. Pages are ordered by app
+        name (then id), so `offset` paging is deterministic across requests.
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+          description: |
+            Page size (1–500). Supplying this parameter opts into the
+            paginated envelope response; values outside the range return 400.
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: |
+            Row offset into the name-ordered fleet. Only meaningful together
+            with `limit`. An offset past the end returns an empty page, not
+            an error.
+        - in: query
+          name: meta
+          schema:
+            type: string
+            enum: [grid]
+          description: |
+            With `meta=grid` (and `limit`), the envelope gains a `meta`
+            object carrying the per-app side-band maps the apps grid
+            renders — profile badges, user verdicts, pending-change
+            breakdown, and device links — scoped to the returned page.
+        - in: query
+          name: view
+          schema:
+            type: string
+            enum: [grouped]
+          description: Returns the grouped privacy view used by dashboards.
+      responses:
+        "200":
+          description: |
+            Bare array of apps (no `limit`), or a pagination envelope
+            (with `limit`).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: "#/components/schemas/App"
+                  - $ref: "#/components/schemas/AppsPage"
+        "400":
+          description: Invalid `limit` or `offset`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [Apps]
+      summary: Delete an app
+      description: |
+        Removes the app and its snapshots. Destructive — requires same-origin
+        and (if configured) the admin token.
+      security:
+        - sameOrigin: []
+          adminToken: []
+      parameters:
+        - in: query
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Deleted.
+        "403":
+          description: CSRF or admin-token check failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/search:
+    post:
+      tags: [Search]
+      summary: Resolve app names to App Store candidates
+      description: Hits Apple's iTunes Search API and ranks the results.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  example: spotify
+                country:
+                  type: string
+                  default: us
+                  example: us
+      responses:
+        "200":
+          description: Ranked list of matches.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SearchResult"
+
+  /api/scrape:
+    post:
+      tags: [Scrape]
+      summary: Scrape App Store privacy labels
+      description: |
+        Fetches each App Store URL, parses the privacy section, and persists
+        the result. With `resync: true`, re-scrapes apps already in the DB and
+        produces change notifications.
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScrapeRequest"
+      responses:
+        "200":
+          description: Scrape complete.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScrapeResult"
+        "429":
+          description: Apple rate-limited the request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/changelog:
+    get:
+      tags: [Changelog]
+      summary: Read snapshot changelog rows
+      parameters:
+        - in: query
+          name: appId
+          schema:
+            type: integer
+            format: int64
+          description: Filter to one app.
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+      responses:
+        "200":
+          description: Changelog rows newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ChangelogRow"
+
+  /api/apps/{id}/acknowledge:
+    post:
+      tags: [Apps]
+      summary: Mark an app's changes acknowledged
+      description: Resets `apps.changeCount` to 0 for this app.
+      security:
+        - sameOrigin: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Acknowledged.
+
+  /api/apps/{id}/import-history:
+    post:
+      tags: [Apps]
+      summary: Import Wayback history for one app
+      description: Walks each calendar quarter from Q1 2021 (1 February 2021) forward and pulls the closest archive.org capture.
+      security:
+        - sameOrigin: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Import complete.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imported:
+                    type: integer
+                  skipped_no_capture:
+                    type: integer
+                  snapshotsRequested:
+                    type: integer
+    delete:
+      tags: [Apps]
+      summary: Purge Wayback rows for one app
+      security:
+        - sameOrigin: []
+          adminToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Wayback rows deleted.
+
+  /api/wayback/import-all:
+    get:
+      tags: [Tasks]
+      summary: Inspect bulk Wayback import status
+      responses:
+        "200":
+          description: Current run state, including resume metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkRunnerStatus"
+    post:
+      tags: [Tasks]
+      summary: Start a bulk Wayback import
+      description: |
+        Walks every tracked app. With `?stream=1`, emits NDJSON events:
+        `batch-start`, `app-start`, `target`, `app-done`, `summary`.
+      security:
+        - sameOrigin: []
+      parameters:
+        - in: query
+          name: stream
+          schema:
+            type: integer
+            enum: [0, 1]
+      responses:
+        "200":
+          description: Run started (or NDJSON event stream if `stream=1`).
+    delete:
+      tags: [Tasks]
+      summary: Wipe every Wayback row
+      security:
+        - sameOrigin: []
+          adminToken: []
+      responses:
+        "200":
+          description: All wayback-sourced snapshots deleted.
+
+  /api/tasks/active:
+    get:
+      tags: [Tasks]
+      summary: Unified bulk-runner status
+      description: |
+        Single snapshot of all three bulk runners. Polled every 4 seconds by
+        the in-app TaskCenter widget.
+      responses:
+        "200":
+          description: Status of sync, wayback, and policy runners.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TasksActive"
+
+  /api/policy/sync-all:
+    get:
+      tags: [Privacy policy]
+      summary: Inspect bulk policy-sync status
+      responses:
+        "200":
+          description: Current run state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkRunnerStatus"
+    post:
+      tags: [Privacy policy]
+      summary: Start a bulk policy sync
+      description: Re-fetches every app's privacy policy, hashes it, and re-summarises only when the hash changes.
+      security:
+        - sameOrigin: []
+      responses:
+        "200":
+          description: Run started.
+
+  /api/policy/regenerate:
+    post:
+      tags: [Privacy policy]
+      summary: Force-regenerate AI summaries
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [appIds]
+              properties:
+                appIds:
+                  type: array
+                  items:
+                    type: integer
+                    format: int64
+      responses:
+        "200":
+          description: Regeneration enqueued.
+
+  /api/backup/export:
+    get:
+      tags: [Backup]
+      summary: Export a versioned backup bundle
+      description: |
+        Returns a JSON bundle with every app, label, snapshot, annotation,
+        notification, focus state, and feature-flag override. Versioned —
+        restorable into the same or a later release.
+      responses:
+        "200":
+          description: JSON bundle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupBundle"
+
+  /api/backup/preview:
+    post:
+      tags: [Backup]
+      summary: Preview a bundle before restore
+      description: |
+        Read-only — returns a summary of what would be replaced if this bundle
+        were restored. Use before calling `POST /api/backup/restore`.
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupBundle"
+      responses:
+        "200":
+          description: Preview of the restore impact.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  appCount:
+                    type: integer
+                  snapshotCount:
+                    type: integer
+                  annotationCount:
+                    type: integer
+                  bundleVersion:
+                    type: string
+
+  /api/backup/restore:
+    post:
+      tags: [Backup]
+      summary: Restore a backup bundle
+      description: |
+        Wipes the existing database and reloads from the bundle. Requires the
+        typed-confirmation query parameter `confirm=RESTORE`.
+      security:
+        - sameOrigin: []
+          adminToken: []
+      parameters:
+        - in: query
+          name: confirm
+          required: true
+          schema:
+            type: string
+            enum: [RESTORE]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupBundle"
+      responses:
+        "200":
+          description: Restore complete.
+        "400":
+          description: Confirmation parameter missing or wrong value.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/sync/status:
+    get:
+      tags: [Tasks]
+      summary: Read scheduled-sync status
+      responses:
+        "200":
+          description: Current scheduler state.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  isDue:
+                    type: boolean
+                  lastRunAt:
+                    type: integer
+                    format: int64
+                    nullable: true
+                  nextRunAt:
+                    type: integer
+                    format: int64
+                    nullable: true
+                  cadence:
+                    type: string
+                    enum: [daily, weekly, off]
+
+  /api/sync/trigger:
+    post:
+      tags: [Tasks]
+      summary: Start a live App Store sync
+      description: Re-scrapes every tracked app. Honours the `sync_running` mutex; returns 409 if a sync is already in flight.
+      security:
+        - sameOrigin: []
+      responses:
+        "200":
+          description: Sync started.
+        "409":
+          description: Another sync is in progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/reset:
+    post:
+      tags: [Admin]
+      summary: Reset application data
+      description: Wipes every tracked app and snapshot. Settings (focus, AI provider, feature flags) are preserved.
+      security:
+        - sameOrigin: []
+          adminToken: []
+      responses:
+        "200":
+          description: Reset complete.
+        "403":
+          description: CSRF or admin-token check failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/admin/start-over:
+    post:
+      tags: [Admin]
+      summary: Full start-over flow
+      description: Wipes all data including settings and routes the user back to onboarding. Stronger than `/api/reset`.
+      security:
+        - sameOrigin: []
+          adminToken: []
+      responses:
+        "200":
+          description: Start-over complete.
+        "403":
+          description: CSRF or admin-token check failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/apps/{id}/history-stats:
+    get:
+      tags: [Apps]
+      summary: Per-app history aggregates
+      description: |
+        Returns timeline aggregate widgets — `categoryTrend` (added/removed
+        per quarter) and `quarterly` (change-event counts for the sparkline).
+        Calendar quarters are aligned to Q1 2021 (1 February 2021), the earliest era Apple's HTML carries privacy nutrition labels.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Aggregates for the app's timeline.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  categoryTrend:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        quarter:
+                          type: string
+                          example: "2021-Q1"
+                        added:
+                          type: integer
+                        removed:
+                          type: integer
+                  quarterly:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        quarter:
+                          type: string
+                        changes:
+                          type: integer
+
+  /api/manual-apps:
+    get:
+      tags: [Manual apps]
+      summary: List manually-tracked apps
+      responses:
+        "200":
+          description: Manual app list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apps:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ManualApp"
+    post:
+      tags: [Manual apps]
+      summary: Create a manually-tracked app
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManualApp"
+      responses:
+        "200":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManualApp"
+
+  /api/manual-apps/{id}:
+    get:
+      tags: [Manual apps]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Manual app detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManualApp"
+    put:
+      tags: [Manual apps]
+      summary: Update a manual app
+      security:
+        - sameOrigin: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManualApp"
+      responses:
+        "200":
+          description: Updated.
+    delete:
+      tags: [Manual apps]
+      summary: Delete a manual app
+      security:
+        - sameOrigin: []
+          adminToken: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted.
+
+  /api/manual-apps/{id}/scrape:
+    post:
+      tags: [Manual apps]
+      summary: Re-scrape a manual app's policy URL
+      security:
+        - sameOrigin: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Scrape complete.
+
+  /api/compare:
+    get:
+      tags: [Compare]
+      summary: Compare data across tracked apps
+      parameters:
+        - in: query
+          name: appIds
+          required: true
+          schema:
+            type: array
+            items:
+              type: integer
+              format: int64
+          style: form
+          explode: false
+          description: Comma-separated app ids to compare.
+      responses:
+        "200":
+          description: Side-by-side comparison payload.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apps:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/App"
+                  matrix:
+                    type: object
+                    additionalProperties: true
+                    description: Severity-coded grid keyed by category.
+
+  /api/related-apps:
+    get:
+      tags: [Compare]
+      summary: Related-app suggestions
+      parameters:
+        - in: query
+          name: appId
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Suggestions based on label overlap and category proximity.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  related:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/App"
+
+  /api/stats/matrix:
+    get:
+      tags: [Stats]
+      summary: Privacy matrix stats
+      description: Powers the dashboard severity/category heatmap.
+      responses:
+        "200":
+          description: Matrix data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+
+  /api/stats/radar:
+    get:
+      tags: [Stats]
+      summary: Radar chart stats
+      responses:
+        "200":
+          description: Radar overlay data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+
+  /api/stats/timeline:
+    get:
+      tags: [Stats]
+      summary: Timeline stats
+      responses:
+        "200":
+          description: Timeline buckets and counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+
+  /api/annotations:
+    get:
+      tags: [Annotations]
+      summary: List annotations
+      parameters:
+        - in: query
+          name: appId
+          schema:
+            type: integer
+            format: int64
+          description: Filter to one app.
+        - in: query
+          name: visibility
+          schema:
+            type: string
+            enum: [export, private, all]
+            default: all
+      responses:
+        "200":
+          description: Annotation list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  annotations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Annotation"
+    post:
+      tags: [Annotations]
+      summary: Create an annotation
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [appId, body, tag, visibility]
+              properties:
+                appId:
+                  type: integer
+                  format: int64
+                body:
+                  type: string
+                tag:
+                  type: string
+                  enum: [concern, positive, follow_up, other]
+                visibility:
+                  type: string
+                  enum: [export, private]
+      responses:
+        "200":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Annotation"
+
+  /api/annotations/{id}:
+    patch:
+      tags: [Annotations]
+      summary: Update an annotation
+      security:
+        - sameOrigin: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                body:
+                  type: string
+                tag:
+                  type: string
+                  enum: [concern, positive, follow_up, other]
+                visibility:
+                  type: string
+                  enum: [export, private]
+      responses:
+        "200":
+          description: Updated.
+    delete:
+      tags: [Annotations]
+      summary: Soft-delete an annotation
+      description: Marks the annotation deleted. A 30-second undo window is enforced client-side; after that it stays soft-deleted.
+      security:
+        - sameOrigin: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Soft-deleted.
+    put:
+      tags: [Annotations]
+      summary: Restore a soft-deleted annotation
+      description: Used by the 30-second undo affordance.
+      security:
+        - sameOrigin: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Restored.
+
+  /api/verdicts:
+    get:
+      tags: [Verdicts]
+      summary: List verdicts
+      parameters:
+        - in: query
+          name: appId
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Verdict list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verdicts:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Verdict"
+    post:
+      tags: [Verdicts]
+      summary: Set or update a verdict for an app
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Verdict"
+      responses:
+        "200":
+          description: Verdict written.
+    delete:
+      tags: [Verdicts]
+      summary: Clear a verdict for an app
+      security:
+        - sameOrigin: []
+      parameters:
+        - in: query
+          name: appId
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Cleared.
+
+  /api/notifications:
+    get:
+      tags: [Notifications]
+      summary: Poll the bell feed
+      parameters:
+        - in: query
+          name: unread
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Notification rows newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Notification"
+    post:
+      tags: [Notifications]
+      summary: Mark notifications read
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: integer
+                    format: int64
+      responses:
+        "200":
+          description: Marked read.
+
+  /api/notification-prefs:
+    get:
+      tags: [Notifications]
+      summary: Read notification preferences
+      responses:
+        "200":
+          description: Per-type enabled map.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPrefs"
+    put:
+      tags: [Notifications]
+      summary: Update notification preferences
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationPrefs"
+      responses:
+        "200":
+          description: Updated.
+
+  /api/activity:
+    get:
+      tags: [Activity]
+      summary: Read activity-log rows
+      parameters:
+        - in: query
+          name: since
+          schema:
+            type: integer
+            format: int64
+          description: Unix ms — return only rows newer than this.
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+            maximum: 1000
+      responses:
+        "200":
+          description: Activity rows newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ActivityRow"
+
+  /api/policy/status/{appId}:
+    get:
+      tags: [Privacy policy]
+      summary: Poll one app's policy summary status
+      parameters:
+        - in: path
+          name: appId
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Current state of the policy summarisation pipeline for this app.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [idle, fetching, summarising, error, done]
+                  lastUpdatedAt:
+                    type: integer
+                    format: int64
+                    nullable: true
+                  policyHash:
+                    type: string
+                    nullable: true
+
+  /api/policy/version/{id}:
+    get:
+      tags: [Privacy policy]
+      summary: Read a stored policy version
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Policy version row.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /api/policy/version/{id}/diff:
+    get:
+      tags: [Privacy policy]
+      summary: Diff a policy version against its predecessor
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        "200":
+          description: Per-section diff.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /api/ai/test:
+    post:
+      tags: [AI]
+      summary: Test an AI provider configuration
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider]
+              properties:
+                provider:
+                  type: string
+                  enum: [openai, anthropic, custom]
+                baseUrl:
+                  type: string
+                  format: uri
+                apiKey:
+                  type: string
+                model:
+                  type: string
+      responses:
+        "200":
+          description: Test result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  detail:
+                    type: string
+                    nullable: true
+
+  /api/ai/models:
+    post:
+      tags: [AI]
+      summary: Fetch available models from a provider
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider]
+              properties:
+                provider:
+                  type: string
+                  enum: [openai, anthropic, custom]
+                baseUrl:
+                  type: string
+                  format: uri
+                apiKey:
+                  type: string
+      responses:
+        "200":
+          description: Available models.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models:
+                    type: array
+                    items:
+                      type: string
+
+  /api/ai/debug-log:
+    get:
+      tags: [AI]
+      summary: Read AI debug log entries
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+      responses:
+        "200":
+          description: Debug log rows newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+    delete:
+      tags: [AI]
+      summary: Clear the AI debug log
+      security:
+        - sameOrigin: []
+          adminToken: []
+      responses:
+        "200":
+          description: Cleared.
+
+  /api/focus:
+    get:
+      tags: [Focus & flags]
+      summary: Read focus state (audience + goals)
+      responses:
+        "200":
+          description: Current focus.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Focus"
+    post:
+      tags: [Focus & flags]
+      summary: Write focus state
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Focus"
+      responses:
+        "200":
+          description: Updated.
+
+  /api/feature-flags:
+    get:
+      tags: [Focus & flags]
+      summary: Resolved feature flags
+      description: |
+        Returns the resolved value of every flag the current build knows about.
+        Resolution order is: hard default → audience → goals → accessibility →
+        runtime checks (Tauri, dependencies) → user override.
+      responses:
+        "200":
+          description: Resolved flag map.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeatureFlagsSnapshot"
+
+  /api/feature-flags/overrides:
+    post:
+      tags: [Focus & flags]
+      summary: Bulk set feature-flag overrides
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
+                enum: [on, off, collapsed]
+              example:
+                "flag.detail.timeline.wayback_rows": "off"
+                "flag.appgrid.filter.risk_buttons": "collapsed"
+      responses:
+        "200":
+          description: Overrides written.
+    delete:
+      tags: [Focus & flags]
+      summary: Clear every override
+      security:
+        - sameOrigin: []
+      responses:
+        "200":
+          description: All overrides cleared.
+
+  /api/feature-flags/overrides/{key}:
+    delete:
+      tags: [Focus & flags]
+      summary: Clear one feature-flag override
+      security:
+        - sameOrigin: []
+      parameters:
+        - in: path
+          name: key
+          required: true
+          schema:
+            type: string
+          description: The flag key, URL-encoded (e.g. `flag.detail.timeline.wayback_rows`).
+      responses:
+        "200":
+          description: Cleared.
+
+  /api/privacy-profile:
+    get:
+      tags: [Profile & preferences]
+      summary: Read privacy profile
+      responses:
+        "200":
+          description: Privacy profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyProfile"
+    put:
+      tags: [Profile & preferences]
+      summary: Write privacy profile
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrivacyProfile"
+      responses:
+        "200":
+          description: Updated.
+
+  /api/accessibility-profile:
+    get:
+      tags: [Profile & preferences]
+      responses:
+        "200":
+          description: Accessibility profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessibilityProfile"
+    put:
+      tags: [Profile & preferences]
+      summary: Write accessibility profile
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessibilityProfile"
+      responses:
+        "200":
+          description: Updated.
+
+  /api/preferences:
+    get:
+      tags: [Profile & preferences]
+      responses:
+        "200":
+          description: General preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Preferences"
+    put:
+      tags: [Profile & preferences]
+      summary: Write general preferences
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Preferences"
+      responses:
+        "200":
+          description: Updated.
+
+  /api/locale:
+    get:
+      tags: [Profile & preferences]
+      summary: Read locale preference
+      responses:
+        "200":
+          description: Locale.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  locale:
+                    type: string
+                    example: en
+    post:
+      tags: [Profile & preferences]
+      summary: Write locale preference
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [locale]
+              properties:
+                locale:
+                  type: string
+                  example: zh
+      responses:
+        "200":
+          description: Updated.
+
+  /api/settings:
+    get:
+      tags: [Settings]
+      summary: Read application settings
+      responses:
+        "200":
+          description: Setting key/value pairs.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    post:
+      tags: [Settings]
+      summary: Write application settings
+      security:
+        - sameOrigin: []
+          adminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Updated.
+
+  /api/settings/desktop:
+    get:
+      tags: [Settings]
+      summary: Read desktop-only settings
+      responses:
+        "200":
+          description: Desktop settings (auto-update preferences, sidecar timeouts, etc.).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+    post:
+      tags: [Settings]
+      summary: Write desktop-only settings
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Updated.
+
+  /api/export:
+    get:
+      tags: [Import / export]
+      summary: Export apps + labels as CSV or JSON
+      parameters:
+        - in: query
+          name: format
+          required: true
+          schema:
+            type: string
+            enum: [csv, json]
+      responses:
+        "200":
+          description: Flat dump of every tracked app, label, snapshot, notification.
+          content:
+            text/csv:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /api/export/audit-bundle:
+    post:
+      tags: [Import / export]
+      summary: Export an audit bundle
+      description: |
+        Curated subset suitable for sharing. Notes flagged `private` are excluded
+        by SQL filter at build time. See [Security & trust → Audit-bundle export
+        threat model](/security#audit-bundle-export-threat-model).
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                appIds:
+                  type: array
+                  items:
+                    type: integer
+                    format: int64
+                  description: Defaults to all tracked apps.
+                includePrivacyProfile:
+                  type: boolean
+                  default: false
+                attribution:
+                  type: string
+                  description: Free-text name attached to your annotations on the recipient's view.
+      responses:
+        "200":
+          description: Bundle ready for download.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditBundle"
+
+  /api/import/audit-bundle:
+    post:
+      tags: [Import / export]
+      summary: Import a shared audit bundle
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuditBundle"
+      responses:
+        "200":
+          description: Bundle imported.
+        "409":
+          description: Bundle version is newer than this install supports.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/imports:
+    get:
+      tags: [Import / export]
+      summary: List import-history batches
+      responses:
+        "200":
+          description: Batches.
+    post:
+      tags: [Import / export]
+      summary: Create an import-history batch
+      security:
+        - sameOrigin: []
+      responses:
+        "200":
+          description: Created.
+    delete:
+      tags: [Import / export]
+      summary: Delete an import-history batch
+      security:
+        - sameOrigin: []
+      parameters:
+        - in: query
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted.
+
+  /api/backup/snapshots:
+    get:
+      tags: [Backup]
+      summary: List server-local rolling snapshots
+      responses:
+        "200":
+          description: Snapshot files in `data/snapshots/`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  snapshots:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        filename:
+                          type: string
+                        createdAt:
+                          type: integer
+                          format: int64
+                        size:
+                          type: integer
+    put:
+      tags: [Backup]
+      summary: Update snapshot schedule + retention
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupSnapshotsConfig"
+      responses:
+        "200":
+          description: Config updated.
+    post:
+      tags: [Backup]
+      summary: Create a server-local snapshot now
+      security:
+        - sameOrigin: []
+      responses:
+        "200":
+          description: Snapshot taken.
+
+  /api/backup/snapshots/{filename}:
+    get:
+      tags: [Backup]
+      summary: Download one server-local snapshot file
+      parameters:
+        - in: path
+          name: filename
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JSON bundle.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupBundle"
+        "404":
+          description: Snapshot not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/deployment/diagnostics:
+    get:
+      tags: [Deployment]
+      summary: Safe deployment diagnostics
+      description: |
+        Self-host-friendly summary suitable for the Settings page or a support
+        bundle. Never includes annotations, AI keys, or app names.
+      responses:
+        "200":
+          description: Diagnostics payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeploymentDiagnostics"
+
+  /api/deployment/support-bundle:
+    get:
+      tags: [Deployment]
+      summary: Copy/paste-safe support bundle
+      description: |
+        Same shape as `/api/deployment/diagnostics` but framed as a single
+        copy/paste blob suitable for pasting into a GitHub issue.
+      responses:
+        "200":
+          description: Plain-text bundle.
+          content:
+            text/plain:
+              schema:
+                type: string

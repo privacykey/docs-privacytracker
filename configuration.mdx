@@ -1,0 +1,124 @@
+---
+title: Configuration
+description: "AI providers, environment variables, background sync, Wayback import, and the admin token."
+---
+
+privacytracker stores almost all configuration in the SQLite `app_settings` key/value table, which means most settings are managed through the in-app **Settings** UI rather than `.env` files. Only a few values genuinely need to live outside the database.
+
+## Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AUDITOR_ADMIN_TOKEN` | (unset) | Optional shared secret. When set, destructive routes (`POST /api/reset`, `DELETE /api/apps`, `POST /api/settings`) require an `X-Auditor-Admin-Token` header verified with `crypto.timingSafeEqual`. Failed attempts are logged to `audit_log` with IP + user agent. |
+| `BUILD_STANDALONE` | (unset) | Build-time flag for `npm run build:standalone` (used by the Tauri sidecar build). |
+| `NODE_V8_COVERAGE` | (unset) | Enables V8 coverage for `npm run test:coverage`. |
+
+That's the entire surface area. Everything else (AI provider, sync schedule, Wayback toggles, notification prefs, focus state, feature-flag overrides) lives in `app_settings` and is changed through the UI.
+
+## AI providers
+
+`lib/ai-config.ts` is the single source of truth. Four provider modes:
+
+<AccordionGroup>
+  <Accordion title="disabled" icon="circle-off">
+    No AI calls are made. Privacy-policy text is still followed and hashed, but no `summary_json` is generated.
+  </Accordion>
+  <Accordion title="openai" icon="key">
+    OpenAI Chat Completions. Set the model in **Settings → AI → Model**. The provider check (`providerRequiresApiKey`) blocks saving without a key.
+  </Accordion>
+  <Accordion title="anthropic" icon="key">
+    Anthropic Messages API. Same UI, different default model.
+  </Accordion>
+  <Accordion title="custom" icon="server">
+    Any OpenAI-compatible endpoint — Ollama, llama.cpp, LM Studio, vLLM. The legacy `ollama` provider value is normalised to `custom` automatically. For local models, `providerLikelyNeedsChunking` triggers the ~12k-character splitter in `lib/privacy-policy.ts` so long policies don't blow the context window.
+  </Accordion>
+</AccordionGroup>
+
+<Frame caption="AI provider settings">
+  ![AI provider settings](/images/settings-ai.png)
+</Frame>
+
+### Local Ollama setup
+
+```bash
+ollama pull llama3.2
+ollama serve
+
+# In Settings → AI:
+# Provider:  Own Model
+# Base URL:  http://localhost:11434
+# Model:     llama3.2
+```
+
+The summariser scores each policy against the lenses defined in `POLICY_TOPIC_GUIDES` (`collection_scope`, `ads_marketing`, `third_party_sharing`, `retention`, `user_rights`, etc.). Summaries only regenerate when the document hash changes — cosmetic edits don't burn AI calls.
+
+## Background sync
+
+Two knobs:
+
+| Setting | Where | Notes |
+|---|---|---|
+| `sync_schedule` | Settings → Sync | `daily` or `weekly` cadence. The 30-minute ticker in `instrumentation.ts` checks `getSchedulerStatus().isDue` and calls `runScheduledSync()`. |
+| `sync_running` | Internal | Cross-request mutex stored in `app_settings`. Respect it if you add another entry point that could trigger a sync. |
+
+Apple's 429 handling is built in: the runner bails out of the loop on the first 429, records a `partial` activity row with `rateLimited` totals, and clears state + mutex cleanly so the next 30-minute tick can retry fresh. That's deliberately different from a process kill — 429 is a recoverable condition.
+
+## Wayback import
+
+Back-fills label history from archive.org. The importer picks one target per calendar quarter starting from **Q1 2021 (1 February 2021)** — the earliest era when Apple's HTML carries privacy nutrition labels — and walks forward to the current quarter. The floor is exposed in code as `APP_STORE_HISTORICAL_FLOOR` (with `APP_STORE_WEB_LAUNCH` kept as an alias for back-compat).
+
+Two parser eras are auto-detected per capture:
+
+- **Modern (Nov 2025+)** — Apple's redesigned web App Store embeds privacy data in `<script id="serialized-server-data">`.
+- **Historical (Jan 2021 – Nov 2025)** — Apple's older Ember/FastBoot site embeds the same data in `<script type="fastboot/shoebox" id="shoebox-media-api-cache-apps">`. The two shapes share identifier enums (`DATA_USED_TO_TRACK_YOU`, etc.), so downstream snapshot diffing and severity styling work without translation.
+
+Captures from before Q1 2021 pre-date the web rollout of nutrition labels and are correctly skipped by the parser.
+
+| Setting (in `app_settings`) | Purpose |
+|---|---|
+| `wayback_show_imported` | `'true'` / `'false'` — controls whether the per-app timeline renders imported rows by default. |
+| `wayback_import_running` | Cross-request mutex during a bulk run. |
+| `wayback_bulk_state` | Resume state blob (queue, totals, initiator). Survives a process kill. |
+
+Bulk runs are crash-safe by design: every app boundary rewrites the state blob, and `instrumentation.ts` schedules a resume check 8 seconds after boot. If the queue has unfinished work, the run resumes automatically with `initiator: 'resume'` and the SettingsView surfaces a purple "↻ Resumed after restart" pill.
+
+<Frame caption="Wayback import row inside an app's change history">
+  ![Wayback timeline row](/images/wayback-timeline.png)
+</Frame>
+
+Endpoints:
+
+- `POST /api/apps/[id]/import-history` — single-app backfill.
+- `POST /api/wayback/import-all?stream=1` — bulk backfill, NDJSON event stream.
+- `DELETE` on either purges the corresponding wayback rows.
+
+When an empty quarter has no Wayback capture anywhere in the ±42-day tolerance window, the importer fires `submitToWaybackSaveNow(app.url)` so a future run can pick it up. Submissions are deduplicated within a single run.
+
+## Crash-safe resume (all three jobs)
+
+| Job | Mutex key | State blob |
+|---|---|---|
+| App Store sync | `sync_running` | `sync_bulk_state` |
+| Wayback import | `wayback_import_running` | `wayback_bulk_state` |
+| Policy sync | `policy_sync_running` | `policy_bulk_state` |
+
+`GET /api/tasks/active` returns a unified `{ wayback, sync, policy }` snapshot. The TaskCenter widget polls it every 4 seconds and surfaces resumed runs as "Resumed after restart" cards.
+
+## Translations
+
+The UI ships through next-intl, and **today that means English only** — the localisation framework is wired up, but the English bundle is the only one that currently ships. The active language is selected at render time from your app settings (a flat route tree, with no per-locale URL prefix), so additional locales appear automatically as they're translated.
+
+`locales/en.json` is the source of truth; every other `locales/<lang>.json` is round-tripped through Crowdin (free OSS plan). Adding or changing locales is a developer task — see [Translations](/develop/translations) under the Develop tab for the full workflow.
+
+```bash
+npm run lint:i18n   # check key parity against en.json
+```
+
+## Health and readiness
+
+| Endpoint | Use it for |
+|---|---|
+| `GET /api/health` | Cheap liveness probe (uptime checks). |
+| `GET /api/ready` | Container healthcheck — DB reachable + data dir writable. |
+| `GET /api/deployment/diagnostics` | Safe deployment diagnostics for the Settings page. |
+| `GET /api/deployment/support-bundle` | Copy/paste-safe deployment support bundle. |

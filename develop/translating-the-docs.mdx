@@ -1,0 +1,153 @@
+---
+title: Translating the docs
+description: "How to add a new language to this docs site, what needs translating, and how the structure mirrors next-intl in the main app."
+---
+
+This page is for someone who wants to translate **the docs site itself** into another language. For translating the privacytracker app's UI strings, see [Translations](/develop/translations) — that's a different pipeline (Crowdin + next-intl) and doesn't touch this Mintlify project.
+
+The docs site supports localisation through Mintlify's per-language navigation. The English bundle is the source of truth; everything else is a parallel tree.
+
+## How Mintlify handles languages
+
+Each language is a standalone navigation tree under `navigation.languages` in `docs.json`. Pages live at `<lang>/<page>.mdx` (no prefix for the default language). Mintlify renders a language switcher in the topbar automatically when more than one language is present.
+
+```json
+{
+  "navigation": {
+    "languages": [
+      {
+        "language": "en",
+        "default": true,
+        "tabs": [ /* current tabs/groups/pages */ ]
+      },
+      {
+        "language": "zh",
+        "tabs": [ /* parallel tree, paths prefixed with zh/ */ ]
+      }
+    ]
+  }
+}
+```
+
+The current `docs.json` uses the simpler `navigation.tabs` shape (English only). Adding a second language means migrating the existing config into the `languages` block and adding a parallel one.
+
+## Add a language end-to-end
+
+<Steps>
+  <Step title="Migrate docs.json to the languages shape">
+    Move the existing `navigation.tabs` array under a single `en` language object, then add an empty `zh` (or your target) language alongside it:
+
+    ```diff
+     "navigation": {
+    -  "tabs": [ ... ]
+    +  "languages": [
+    +    {
+    +      "language": "en",
+    +      "default": true,
+    +      "tabs": [ ... existing tabs unchanged ... ]
+    +    },
+    +    {
+    +      "language": "zh",
+    +      "tabs": [
+    +        {
+    +          "tab": "自托管",
+    +          "groups": [
+    +            { "group": "开始", "pages": ["zh/introduction"] }
+    +          ]
+    +        }
+    +      ]
+    +    }
+    +  ]
+     }
+    ```
+
+    Keep the `zh` tree small at first — Mintlify is happy to ship a partial translation. Pages that don't exist in the target language fall back to the URL the user had open, but no automatic English-fallback render: the language switcher only offers languages where the *current* page exists.
+  </Step>
+  <Step title="Create the parallel folder">
+    Mirror the file paths under a top-level `zh/`:
+
+    ```
+    privacytracker-docs/
+    ├── introduction.mdx           ← English
+    ├── zh/
+    │   ├── introduction.mdx       ← Chinese version
+    │   ├── quickstart.mdx
+    │   ├── installation.mdx
+    │   └── ...
+    ├── develop/architecture.mdx   ← English
+    └── zh/develop/architecture.mdx ← Chinese version
+    ```
+
+    Frontmatter `title` and `description` should be in the target language; the rest of the page is whatever you'd write in markdown.
+  </Step>
+  <Step title="Translate brand-neutral terms only">
+    Mirror the policy from the main app: brand names (privacytracker, App Store, Apple Configurator, ToS;DR, PrivacySpy), shell commands, file paths, and code identifiers stay in English. Headings, paragraph text, table headers, and component captions translate.
+
+    Code blocks should stay byte-identical to the English versions — readers copy-paste them.
+  </Step>
+  <Step title="Translate links carefully">
+    Internal links inside `zh/` should point at `zh/`-prefixed paths so the language stays consistent across navigation. Mintlify rewrites links automatically only when they're relative; absolute paths (like `/develop/architecture`) stay literal. Use:
+
+    ```mdx
+    See [Architecture](/zh/develop/architecture) for the full data flow.
+    ```
+
+    not:
+
+    ```mdx
+    See [Architecture](/develop/architecture) for the full data flow.
+    ```
+
+    inside translated pages.
+  </Step>
+  <Step title="Update the OpenAPI tab carefully">
+    The auto-generated API Reference pages (under the `Reference` group) read from `api-reference/openapi.yaml`. Currently they're rendered once. To translate them, you'd either maintain a parallel `api-reference/openapi.zh.yaml` (and reference it under the `zh` tab) or accept that endpoint reference pages stay in English in every locale. The latter is the standard choice for OSS projects — endpoint summaries are usually short enough that locale-mixing is tolerable.
+  </Step>
+  <Step title="Run the parity check">
+    There's no built-in equivalent of `npm run lint:i18n` for the docs (yet) — the analogous check is "every English page has a counterpart under `zh/`":
+
+    ```bash
+    diff <(find . -name "*.mdx" ! -path "./zh/*" | sed 's|^\./||' | sort) \
+         <(find ./zh -name "*.mdx" | sed 's|^./zh/||' | sort)
+    ```
+
+    Empty diff = parity. Anything in only the first list is missing a translation.
+  </Step>
+  <Step title="Preview locally">
+    ```bash
+    mint dev
+    ```
+
+    The language switcher appears in the topbar once `navigation.languages` has more than one entry.
+  </Step>
+</Steps>
+
+## Recommended translation workflow
+
+We don't currently use Crowdin for the docs site (the main app uses it for UI strings). Two options work well:
+
+**Manual via PRs.** Translators fork the docs repo, work in `zh/<page>.mdx`, and open a PR per page or per group. Lower coordination cost; suits small docs sites and infrequent updates.
+
+**Crowdin for docs.** Crowdin supports MDX. If translation activity warrants it, a `crowdin.yml` mirroring the app's setup but pointing at the docs repo would put both flows in the same tool. For the volume of docs we ship today, the manual path is simpler.
+
+## Keeping translations in sync with English
+
+When the English source changes, the corresponding `zh/` page is now out of date. Two safety nets:
+
+- **A `last-reviewed` frontmatter field** that translators bump when they confirm a page matches the current English version. The link-check workflow can be extended to flag pages where the English file has been modified since the translation was last reviewed.
+- **A "translation status" page** in each language (e.g. `zh/translation-status.mdx`) listing which pages are up-to-date, stale, or missing. Tedious to maintain by hand; trivial to generate from `git log` if you want a CI script.
+
+Both are nice-to-haves; neither is in place yet.
+
+## Adding a third language
+
+Once `zh` is set up, adding `ja` or `es` is purely additive: another entry in `navigation.languages`, another `<lang>/` folder, more PRs from translators. Mintlify imposes no upper limit.
+
+## What *not* to translate
+
+- **Frontmatter keys** (`title`, `description`) — translate the values, never the keys.
+- **Component names** (`<Card>`, `<Steps>`, `<AccordionGroup>`) — these are JSX and must stay literal.
+- **File names and paths** — `/develop/architecture` is a URL, not English prose.
+- **`docs.json` structure** — the language-specific config goes inside `languages[i]`, but the surrounding shape is fixed.
+
+If you're unsure whether something translates, leave it in English — it's easier to add a translation later than to undo a wrong one.

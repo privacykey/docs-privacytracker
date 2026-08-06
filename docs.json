@@ -1,0 +1,184 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "privacytracker",
+  "description": "Track how iOS apps' App Store privacy labels change over time, summarise developer privacy policies with AI, and back-fill history from the Internet Archive.",
+  "colors": {
+    "primary": "#0a84ff",
+    "light": "#409cff",
+    "dark": "#0066d6"
+  },
+  "favicon": "/images/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "banner": {
+    "content": "These docs were drafted with AI assistance and may contain inaccuracies — **verify before following any instruction**. [More about these docs →](/about-these-docs)",
+    "dismissible": true
+  },
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude"]
+  },
+  "feedback": {
+    "thumbsRating": true,
+    "suggestEdits": true,
+    "raiseIssue": true
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Self-Host",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "alternatives",
+              "quickstart",
+              "installation",
+              "configuration"
+            ]
+          },
+          {
+            "group": "Recipes",
+            "pages": [
+              "cookbook"
+            ]
+          },
+          {
+            "group": "Operate",
+            "pages": [
+              "performance-and-sizing",
+              "backup-and-restore",
+              "security",
+              "hardening",
+              "upgrading",
+              "troubleshooting"
+            ]
+          },
+          {
+            "group": "Help",
+            "pages": [
+              "faq",
+              "glossary",
+              "changelog",
+              "about-these-docs"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Develop",
+        "groups": [
+          {
+            "group": "Build privacytracker",
+            "pages": [
+              "develop/overview",
+              "develop/build-from-source",
+              "develop/scripts",
+              "develop/contributing"
+            ]
+          },
+          {
+            "group": "How it works",
+            "pages": [
+              "develop/architecture",
+              "develop/feature-flags",
+              "develop/tauri",
+              "develop/translations"
+            ]
+          },
+          {
+            "group": "Docs site itself",
+            "pages": [
+              "develop/translating-the-docs",
+              "develop/versioning"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api-reference/introduction"
+            ]
+          },
+          {
+            "group": "Reference",
+            "openapi": "api-reference/openapi.yaml"
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "GitHub",
+          "href": "https://github.com/privacykey/privacytracker",
+          "icon": "github"
+        },
+        {
+          "anchor": "Releases",
+          "href": "https://github.com/privacykey/privacytracker/releases/latest",
+          "icon": "rocket"
+        },
+        {
+          "anchor": "Issues",
+          "href": "https://github.com/privacykey/privacytracker/issues",
+          "icon": "bug"
+        }
+      ]
+    }
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Issues",
+        "href": "https://github.com/privacykey/privacytracker/issues"
+      }
+    ],
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/privacykey/privacytracker"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/privacykey/privacytracker"
+    }
+  },
+  "search": {
+    "prompt": "Search the privacytracker docs"
+  },
+  "errors": {
+    "404": {
+      "redirect": false
+    }
+  },
+  "seo": {
+    "metatags": {
+      "og:type": "website",
+      "og:site_name": "privacytracker docs",
+      "og:image": "/images/og-default.svg",
+      "twitter:card": "summary_large_image",
+      "twitter:image": "/images/og-default.svg"
+    },
+    "indexing": "navigable"
+  },
+  "integrations": {
+    "plausible": {
+      "domain": "docs.privacytracker.io"
+    }
+  },
+  "metadata": {
+    "robots": "index, follow"
+  },
+  "fonts": {
+    "heading": { "family": "Inter" },
+    "body": { "family": "Inter" }
+  }
+}

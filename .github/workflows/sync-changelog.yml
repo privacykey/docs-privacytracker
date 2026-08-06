@@ -1,0 +1,52 @@
+name: Sync changelog from main repo
+
+on:
+  schedule:
+    # Daily at noon UTC. Releases on the main repo update CHANGELOG.md whenever
+    # release.yml runs; the cron picks them up the next day at the latest.
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run smoke check on current state
+        run: npm run check
+
+      - name: Sync changelog from main repo
+        run: npm run sync-changelog
+
+      - name: Re-run smoke check on new state
+        run: npm run check
+
+      - name: Open PR if changelog.mdx changed
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "docs: sync CHANGELOG from main repo"
+          title: "docs: sync CHANGELOG from main repo"
+          branch: chore/sync-changelog
+          delete-branch: true
+          labels: docs, automation
+          body: |
+            Automated sync of `changelog.mdx` from
+            [`privacykey/privacytracker@main`](https://github.com/privacykey/privacytracker/blob/main/CHANGELOG.md).
+
+            Run by `.github/workflows/sync-changelog.yml` (daily cron at 12:00 UTC, or manual `workflow_dispatch`).
+
+            The conversion lives in `scripts/sync-changelog.mjs` — if this PR's diff looks wrong, fix the script there rather than hand-editing `changelog.mdx`. See [CONTRIBUTING.md → Editing the changelog](../blob/main/CONTRIBUTING.md#editing-the-changelog).
+
+            Reviewer checklist:
+            - [ ] Diff looks like real upstream content (not a mangled conversion)
+            - [ ] No private notes / unreleased material slipped in
+            - [ ] `npm run check` passes (CI step above ran it twice)

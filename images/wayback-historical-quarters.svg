@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-label="Wayback timeline showing privacy-label history from Q1 2021 to present">
+  <!-- Mockup of the per-app timeline rendering Wayback-imported snapshots
+       across the full Q1 2021 → present range. Used in cookbook.mdx and
+       configuration.mdx to show readers the visual outcome of the
+       extended floor before they run the importer themselves.
+       Mirrors the live app's tokens (dark surface, purple Wayback dot,
+       severity-coloured tier chips) but is intentionally schematic — a
+       real screenshot replaces this once a contributor re-captures it
+       against a back-filled install. See SCREENSHOTS.md. -->
+  <defs>
+    <style>
+      .surface { fill: #0E1117; }
+      .panel { fill: #161B22; stroke: #30363D; stroke-width: 1; }
+      .row-bg { fill: #161B22; stroke: #21262D; stroke-width: 1; }
+      .text-primary { fill: #E6EDF3; font-family: Inter, system-ui, -apple-system, sans-serif; }
+      .text-muted { fill: #8B949E; font-family: Inter, system-ui, -apple-system, sans-serif; }
+      .text-faint { fill: #6E7681; font-family: Inter, system-ui, -apple-system, sans-serif; }
+      .dot-wayback { fill: #A371F7; }
+      .dot-live { fill: #58A6FF; }
+      .tier-tracking { fill: rgba(255, 159, 10, 0.18); stroke: rgba(255, 159, 10, 0.55); }
+      .tier-linked   { fill: rgba(255, 69, 58, 0.16);  stroke: rgba(255, 69, 58, 0.55); }
+      .tier-unlinked { fill: rgba(255, 214, 10, 0.14); stroke: rgba(255, 214, 10, 0.55); }
+      .pill { fill: #21262D; stroke: #30363D; stroke-width: 1; }
+      .pill-text { fill: #C9D1D9; font-family: Inter, system-ui, sans-serif; font-size: 10px; }
+      .badge-match { fill: rgba(48, 209, 88, 0.16); stroke: rgba(48, 209, 88, 0.55); stroke-width: 1; }
+    </style>
+  </defs>
+
+  <rect class="surface" width="1280" height="720"/>
+
+  <!-- Title strip -->
+  <text class="text-primary" x="48" y="56" font-size="20" font-weight="600">Spotify — Change history</text>
+  <text class="text-muted"  x="48" y="80" font-size="13">19 quarterly snapshots imported from archive.org · floor: 1 Feb 2021</text>
+
+  <!-- Timeline panel -->
+  <rect class="panel" x="40" y="104" width="1200" height="576" rx="10"/>
+
+  <!-- Group label: 2025 -->
+  <text class="text-faint" x="64" y="140" font-size="11" font-weight="600" letter-spacing="1.5">2025</text>
+
+  <!-- Row: Q4 2025 — live sync -->
+  <rect class="row-bg" x="64" y="152" width="1152" height="56" rx="6"/>
+  <circle class="dot-live" cx="86" cy="180" r="6"/>
+  <text class="text-primary" x="106" y="178" font-size="13" font-weight="500">28 Nov 2025 · Live sync</text>
+  <text class="text-muted"   x="106" y="196" font-size="11">No category changes since previous snapshot</text>
+  <rect class="pill" x="990" y="166" width="84" height="22" rx="11"/>
+  <text class="pill-text" x="1000" y="181">scheduled</text>
+  <rect class="badge-match" x="1086" y="166" width="124" height="22" rx="11"/>
+  <text class="pill-text" x="1098" y="181" fill="#7EE787">✓ matches archive</text>
+
+  <!-- Row: Q3 2025 — wayback -->
+  <rect class="row-bg" x="64" y="220" width="1152" height="56" rx="6"/>
+  <circle class="dot-wayback" cx="86" cy="248" r="6"/>
+  <text class="text-primary" x="106" y="246" font-size="13" font-weight="500">15 Aug 2025 · Wayback · 2025-08-15</text>
+  <text class="text-muted"   x="106" y="264" font-size="11">+ Diagnostics added under Data Not Linked to You</text>
+  <rect class="tier-unlinked" x="700" y="234" width="100" height="22" rx="11"/>
+  <text class="pill-text" x="710" y="249" fill="#FFD60A">+ Diagnostics</text>
+  <rect class="pill" x="990" y="234" width="84" height="22" rx="11"/>
+  <text class="pill-text" x="1003" y="249">wayback</text>
+
+  <text class="text-faint" x="64" y="308" font-size="11" font-weight="600" letter-spacing="1.5">2024</text>
+
+  <!-- Row: Q4 2024 — wayback -->
+  <rect class="row-bg" x="64" y="320" width="1152" height="56" rx="6"/>
+  <circle class="dot-wayback" cx="86" cy="348" r="6"/>
+  <text class="text-primary" x="106" y="346" font-size="13" font-weight="500">12 Nov 2024 · Wayback · 2024-11-12</text>
+  <text class="text-muted"   x="106" y="364" font-size="11">+ Precise Location promoted from Linked → Tracking</text>
+  <rect class="tier-tracking" x="700" y="334" width="160" height="22" rx="11"/>
+  <text class="pill-text" x="710" y="349" fill="#FF9F0A">↑ Location → tracking</text>
+  <rect class="pill" x="990" y="334" width="84" height="22" rx="11"/>
+  <text class="pill-text" x="1003" y="349">wayback</text>
+
+  <!-- Row: Q1 2024 — wayback -->
+  <rect class="row-bg" x="64" y="388" width="1152" height="56" rx="6"/>
+  <circle class="dot-wayback" cx="86" cy="416" r="6"/>
+  <text class="text-primary" x="106" y="414" font-size="13" font-weight="500">22 Feb 2024 · Wayback · 2024-02-22</text>
+  <text class="text-muted"   x="106" y="432" font-size="11">No category changes since previous snapshot</text>
+  <rect class="pill" x="990" y="402" width="84" height="22" rx="11"/>
+  <text class="pill-text" x="1003" y="417">wayback</text>
+
+  <text class="text-faint" x="64" y="476" font-size="11" font-weight="600" letter-spacing="1.5">2022</text>
+
+  <!-- Row: Q2 2022 — wayback -->
+  <rect class="row-bg" x="64" y="488" width="1152" height="56" rx="6"/>
+  <circle class="dot-wayback" cx="86" cy="516" r="6"/>
+  <text class="text-primary" x="106" y="514" font-size="13" font-weight="500">04 May 2022 · Wayback · 2022-05-04</text>
+  <text class="text-muted"   x="106" y="532" font-size="11">+ Identifiers added under Data Linked to You</text>
+  <rect class="tier-linked" x="700" y="502" width="118" height="22" rx="11"/>
+  <text class="pill-text" x="710" y="517" fill="#FF453A">+ Identifiers</text>
+  <rect class="pill" x="990" y="502" width="84" height="22" rx="11"/>
+  <text class="pill-text" x="1003" y="517">wayback</text>
+
+  <text class="text-faint" x="64" y="576" font-size="11" font-weight="600" letter-spacing="1.5">2021 · oldest available</text>
+
+  <!-- Row: Q1 2021 — earliest -->
+  <rect class="row-bg" x="64" y="588" width="1152" height="56" rx="6"/>
+  <circle class="dot-wayback" cx="86" cy="616" r="6"/>
+  <text class="text-primary" x="106" y="614" font-size="13" font-weight="500">15 Feb 2021 · Wayback · 2021-02-15  ·  baseline</text>
+  <text class="text-muted"   x="106" y="632" font-size="11">First captured privacy footprint · 3 categories under Data Linked to You</text>
+  <rect class="tier-linked" x="700" y="602" width="190" height="22" rx="11"/>
+  <text class="pill-text" x="710" y="617" fill="#FF453A">3 categories · linked</text>
+  <rect class="pill" x="990" y="602" width="84" height="22" rx="11"/>
+  <text class="pill-text" x="1003" y="617">wayback</text>
+
+  <!-- Footer hint -->
+  <text class="text-faint" x="48" y="704" font-size="11">
+    Mockup — replace with a real screenshot per /images/SCREENSHOTS.md once back-filled. Real captures will use Inter at retina density.
+  </text>
+</svg>

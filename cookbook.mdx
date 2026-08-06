@@ -1,0 +1,285 @@
+---
+title: Use cases
+description: "Five end-to-end walkthroughs showing how privacytracker actually gets used — kid's iPad, app comparison, household NAS, regulator audit prep, partner privacy review."
+---
+
+The other Self-Host pages are organised by *feature*. This one is organised by *scenario* — five concrete jobs people use privacytracker for, each with the audience setting, install path, and end-to-end steps.
+
+If your situation matches one of these, follow the recipe. If it almost-but-not-quite matches, the cross-references at each step let you mix-and-match.
+
+<CardGroup cols={2}>
+  <Card title="Track a kid's iPad" icon="child" href="#track-every-app-on-a-kids-ipad">
+    Guardian audience, batch import from device backup, quiet hours, change notifications.
+  </Card>
+  <Card title="Compare two apps" icon="scale-balanced" href="#compare-two-competing-apps-before-installing">
+    Manual entry, scrape both, side-by-side compare view, AI-summarised differences.
+  </Card>
+  <Card title="Self-host on a NAS" icon="server" href="#self-host-on-a-home-nas-for-the-household">
+    Docker Compose on Synology / Unraid, admin token, reverse proxy, off-host backups.
+  </Card>
+  <Card title="Audit prep" icon="folder-tree" href="#back-fill-a-year-of-history-before-a-regulator-audit">
+    Bulk Wayback import, save-page-now retries, audit-bundle export.
+  </Card>
+  <Card title="Partner privacy review" icon="people-arrows" href="#run-a-privacy-review-with-a-partner-or-family-member">
+    Loved-one audience, exportable vs. private annotations, secure bundle handoff.
+  </Card>
+</CardGroup>
+
+## Track every app on a kid's iPad
+
+**Audience:** `guardian`. **Goal:** `understand`. **Install path:** desktop app or Docker — whichever you'll keep running long-term.
+
+The job: get a clean view of everything installed on a child's device, surface what's high-severity, and notify you only when something actually changes — not every time Apple's HTML reflows.
+
+<Steps>
+  <Step title="Set the focus on first run">
+    Open privacytracker, pick **Guardian** when the audience picker appears, and choose **Understand** as the primary goal. The defaults that flow from this combination raise severity-tier visibility on the dashboard, default the bell to *only changed apps*, and apply 22:00–07:00 quiet hours. You can override any of this later in **Settings → Developer Options → Feature flags**, but the defaults are tuned for exactly this scenario.
+  </Step>
+  <Step title="Export the kid's app list">
+    Plug the iPad into your Mac, run a Finder backup (no encryption needed), then from your privacytracker source checkout (or any clone of the main repo):
+
+    ```bash
+    python3 tools/ios-app-import/export_ios_apps.py --mode backup
+    ```
+
+    The helper writes a `.txt` of every installed app's bundle ID and display name. If you're not running from source, the helper is published as a stand-alone script under `tools/ios-app-import/` in the [main repo](https://github.com/privacykey/privacytracker/tree/main/tools/ios-app-import) — clone just that directory and run it; you don't need the rest of the codebase.
+
+    Alternatively, if you have `ideviceinstaller` installed (`brew install libimobiledevice`), use `--mode device` against the connected iPad without taking a backup.
+  </Step>
+  <Step title="Bulk-import into privacytracker">
+    In the onboarding wizard's **Add apps** step, click **Upload list** and pick the `.txt` from step 2. privacytracker resolves each name through the iTunes Search API, shows you the ranked candidates in a confirm dialog, and starts the scrape once you accept. Apps it can't resolve land in a *needs review* tab — usually misspellings or region-locked apps that need a manual App Store URL.
+  </Step>
+  <Step title="Configure quiet hours and the bell">
+    The guardian defaults already enable 22:00–07:00 quiet hours via `notifications.not_before`, so changes detected overnight defer to morning. If your kid uses different time zones (boarding school, holidays at a relative's house), adjust under **Settings → Notifications → Quiet hours**.
+
+    For the bell itself, leave the default **Only when categories change** filter on. Re-scrapes that produce no diff don't add to the unread badge.
+  </Step>
+  <Step title="(Optional) Enable AI for high-severity apps">
+    If you want plain-English summaries of the policies for apps that collect *Precise Location*, *Sensitive Contacts*, or *Financial Info*, configure an AI provider under **Settings → AI**. The summariser scores each policy against the lenses in `POLICY_TOPIC_GUIDES` (`collection_scope`, `ads_marketing`, `third_party_sharing`, `retention`, etc.) — exactly the questions a guardian wants answered. Hosted providers run a fraction of a cent per app; a local Ollama setup is free at runtime.
+
+    See [Configuration → AI providers](/configuration#ai-providers) for the full setup. To keep it scoped, summarise apps one at a time with the **Regenerate** button on each app's detail page — cover the high-severity apps and skip the kid's wallpaper app.
+  </Step>
+  <Step title="What success looks like">
+    A dashboard view filtered to *changed in the last 7 days*, a bell that pings you when an app newly collects something it didn't before (and stays silent otherwise), and a per-app timeline showing exactly when each label appeared.
+
+    Re-scrape monthly via **Settings → Sync → Run now**, or leave the 30-minute scheduler running with a daily cadence. The crash-safe resume pattern means a laptop sleep mid-sync doesn't lose the queue — see [Architecture](/develop/architecture#three-runners-that-all-crash-safely-resume).
+  </Step>
+</Steps>
+
+## Compare two competing apps before installing
+
+**Audience:** `self`. **Goal:** any. **Install path:** anything — this works fine on a desktop install you only spin up when you need it.
+
+The job: you're picking between two apps that do similar things — say, two journaling apps, two budgeting apps, two flashlight apps with surprisingly elaborate privacy policies. You want to see their privacy labels side by side without installing either one first.
+
+<Steps>
+  <Step title="Add both apps via App Store URL">
+    From the onboarding wizard or **Settings → Apps → Add app**, paste the App Store URL of each candidate. privacytracker resolves the numeric track ID and scrapes both. You don't need to have the apps installed on any device — the scraper just hits Apple's public HTML.
+
+    Tip: use the `?utm_source=...` parameter on either URL or strip it; the parser only cares about the `/id<digits>/` segment.
+  </Step>
+  <Step title="Open the Compare view">
+    Go to the dashboard and click **Compare** in the top bar (or `/dashboard/compare`). Pick the two apps from the dropdown.
+
+    The Compare view shows privacy labels in a side-by-side severity-coded grid. *Data Used to Track You* lines up against *Data Used to Track You*, *Data Linked to You* against the same — so you can see which app has Location for tracking and which one only collects it for app functionality.
+  </Step>
+  <Step title="(If AI is configured) read the policy summaries side-by-side">
+    The Compare view's bottom panel pulls each app's AI-summarised privacy policy and renders them in two columns, lens-by-lens — *collection scope*, *ads & marketing*, *third-party sharing*, *retention*, *user rights*, *children*, *security*, *disclosure*. Differences in language at the *retention* lens, especially, are usually where the real distinction between two superficially-similar apps shows up.
+
+    No AI configured? You can still click through to each app's policy URL on its detail page and read the source.
+  </Step>
+  <Step title="Annotate your decision">
+    On either app's detail page, drop an annotation explaining your reasoning (`I'm picking app A because B sells aggregated data to advertisers and A doesn't`). Tag it `concern` or `positive`. Set visibility to `private` if it's just for you, `export` if you might share it later — see the next two recipes.
+  </Step>
+</Steps>
+
+This is also a good way to vet a *replacement* for an app you already use — add the candidate alongside your current pick and compare before you migrate.
+
+## Self-host on a home NAS for the household
+
+**Install path:** Docker. **Audience:** any (the same instance can serve multiple household members; everyone uses the same browser-accessible UI).
+
+The job: run privacytracker on always-on hardware (Synology, Unraid, a Raspberry Pi, an old laptop in a closet) so the household can hit it from any device on the LAN, with the data backed up off-host.
+
+<Steps>
+  <Step title="Set up Docker on the NAS">
+    Synology DSM ships Docker as a Package Center add-on. Unraid has Docker support out of the box. On a Pi or generic Linux box:
+
+    ```bash
+    curl -fsSL https://get.docker.com | sh
+    sudo usermod -aG docker $USER
+    ```
+
+    Log out and back in so the group membership takes effect.
+  </Step>
+  <Step title="Pull privacytracker">
+    ```bash
+    git clone https://github.com/privacykey/privacytracker.git
+    cd privacytracker
+
+    # Generate an admin token before first start
+    export AUDITOR_ADMIN_TOKEN=$(openssl rand -hex 32)
+    echo "AUDITOR_ADMIN_TOKEN=$AUDITOR_ADMIN_TOKEN" >> .env
+
+    docker compose up --build -d
+    ```
+
+    The bind-mounted `./data/privacy.db` lives on the NAS's persistent storage. Confirm it survives a `docker compose down && up` before going further.
+  </Step>
+  <Step title="Front it with a reverse proxy + TLS">
+    The household browses to the NAS's hostname, not its bare IP. A short Caddyfile:
+
+    ```caddyfile
+    privacytracker.lan {
+        reverse_proxy localhost:3000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+    ```
+
+    Caddy gets you automatic Let's Encrypt TLS if `privacytracker.lan` resolves on the public internet, or self-signed certs for a LAN-only deploy. The `Host` header forwarding is non-negotiable — privacytracker enforces a same-origin CSRF check on every mutating verb, so a proxy that strips the Host header will cause every action to fail with `origin_mismatch`. See [Troubleshooting → Reverse-proxy CSRF rejection](/troubleshooting#reverse-proxy-csrf-rejection) if you hit that.
+  </Step>
+  <Step title="Lock down the destructive routes">
+    Confirm the admin token from step 2 is taking effect:
+
+    ```bash
+    # Should fail with 403 (no token):
+    curl -X POST https://privacytracker.lan/api/reset \
+      -H "Origin: https://privacytracker.lan"
+
+    # Should succeed (token present):
+    curl -X POST https://privacytracker.lan/api/reset \
+      -H "Origin: https://privacytracker.lan" \
+      -H "X-Auditor-Admin-Token: $AUDITOR_ADMIN_TOKEN"
+    ```
+
+    The token is verified with `crypto.timingSafeEqual`. Failed attempts append to `audit_log` with the requester IP — review periodically via **Settings → Diagnostics → Audit log**.
+
+    For full hardening, see [Security & trust](/security#authentication-and-access-control).
+  </Step>
+  <Step title="Set up off-host backups">
+    The NAS's own RAID is not a backup. Schedule a daily rsync (or NAS-native sync task) of `./data/` to a different drive — ideally a different physical machine:
+
+    ```cron
+    0 3 * * * rsync -a /volume1/docker/privacytracker/data/ user@backup-host:/backups/privacytracker-$(date +\%F)/
+    ```
+
+    Or use the in-app **Settings → Backup → Server snapshots** to keep rolling JSON bundles, then sync those out. See [Backup & restore](/backup-and-restore) for the full options.
+  </Step>
+  <Step title="What success looks like">
+    Anyone in the house can browse to `https://privacytracker.lan`, the 30-minute background sync runs unattended, the bell shows newly-changed apps without anyone needing to think about it, and `data/privacy.db` is replicated nightly to a different machine. The admin token gates `POST /api/reset` so a curious guest on the LAN can't wipe the database.
+  </Step>
+</Steps>
+
+## Back-fill a year of history before a regulator audit
+
+**Audience:** any. **Goal:** any. **Install path:** Docker or desktop, with internet access.
+
+The job: an organisation needs evidence of an app's privacy disclosures going back several months or years — for a DPIA, a regulator request, a custody-evaluation submission, or just a personal record. privacytracker's Wayback importer walks every calendar quarter from **Q1 2021 (1 February 2021)** forward — the earliest era when Apple's HTML carries privacy nutrition labels — and pulls the closest archive.org capture per quarter. For an app that's been live the whole time that's roughly 19 quarters of history. The parser auto-detects which era it's looking at: the modern `serialized-server-data` blob (Nov 2025+) or the older Ember/FastBoot `shoebox-media-api-cache-apps` shape (Jan 2021 – Nov 2025).
+
+<Steps>
+  <Step title="Make sure every app of interest is tracked">
+    The Wayback importer only fetches history for apps already in your database. Add them first — by name through the iTunes Search API, by App Store URL, or in bulk from a `.txt`. See [Quickstart → Import your first apps](/quickstart#import-your-first-apps).
+  </Step>
+  <Step title="Run the bulk Wayback import">
+    From **Settings → Sync → Wayback import → Run now**, or:
+
+    ```bash
+    curl -X POST "http://localhost:3000/api/wayback/import-all?stream=1" \
+      -H "Origin: http://localhost:3000" \
+      -H "X-Auditor-Admin-Token: $AUDITOR_ADMIN_TOKEN"
+    ```
+
+    The `?stream=1` flag gets you NDJSON events as the run progresses (`batch-start`, `app-start`, `target`, `app-done`, `summary`). Without it, the route returns once the run finishes.
+
+    Expected result: most apps get 1-3 quarterly snapshots; some get none ("skipped, no capture"). For each empty quarter, the importer fires an archive.org Save Page Now request fire-and-forget, so a future run will pick up the newly-archived page.
+  </Step>
+  <Step title="Wait, then re-run">
+    Wayback typically takes a few days to process Save-Page-Now requests. Re-run the import in 1-2 weeks; it'll pick up captures that weren't there the first time. The `snapshotsRequested` counter in the summary tells you how many save-now requests went out — that's the upper bound on how much new history the next run can find.
+  </Step>
+  <Step title="Inspect the timeline">
+    Open any app's detail page. Wayback rows render with a purple dot, a clock glyph, and a *Wayback · YYYY-MM-DD* badge linking to the original archive.org capture. Where a Wayback snapshot is byte-identical to an adjacent live row, a green *Matches live sync* badge appears — useful for showing a regulator that the archive and the live page agree.
+
+    Trigger pills (`scheduled` / `manual` / `import` / `wayback`) on each timeline row tell you the provenance of every snapshot.
+
+    <Frame caption="Per-app timeline after a full Q1 2021 → present back-fill (mockup)">
+      ![Wayback timeline showing 19 quarters of historical privacy-label snapshots from Q1 2021 to Q4 2025](/images/wayback-historical-quarters.svg)
+    </Frame>
+  </Step>
+  <Step title="Export an audit bundle">
+    From **Settings → Export → Audit bundle**, or:
+
+    ```bash
+    curl -X POST http://localhost:3000/api/export/audit-bundle \
+      -H "Origin: http://localhost:3000" \
+      -H "Content-Type: application/json" \
+      --data '{"appIds": [324684580, 333903271]}' \
+      -o privacy-audit-$(date +%F).json
+    ```
+
+    The bundle is a versioned JSON file containing the apps, every snapshot (live + Wayback), AI summaries if you have them, and any annotations marked `visibility = 'export'`. Private notes are excluded by SQL filter at build time — there is no force-include.
+
+    For long-term archive, store the bundle alongside the original Wayback capture URLs (they're embedded in the bundle). The capture URLs use the `id_` suffix (`/web/<ts>id_/<orig>`) so Apple's HTML comes through clean of archive.org's toolbar injector — meaning the capture is forensically usable too, not just human-readable.
+  </Step>
+  <Step title="What success looks like">
+    A complete quarterly history per tracked app from **Q1 2021** forward (about 19 quarters for an always-live app), exportable as a single JSON file with each snapshot timestamped, sourced (live vs. Wayback), and linked back to the original archive.org capture for independent verification.
+  </Step>
+</Steps>
+
+## Run a privacy review with a partner or family member
+
+**Audience:** `loved_one`. **Goal:** `understand`. **Install path:** any.
+
+The job: you and a partner (or another household member, or a friend you're helping) want to look at your respective app collections together — comparing notes on what each of you has installed and how concerned you each are about specific apps. You don't want to install another tool on their machine; you want to share a curated bundle they can read.
+
+<Steps>
+  <Step title="Set the audience to loved_one">
+    On first run pick **Loved one**, or change it later in **Settings → Your focus → Adjust**. This unlocks the audit-bundle export workflow and adjusts the dashboard's emphasis from severity-grids toward annotation visibility.
+  </Step>
+  <Step title="Annotate as you review">
+    Walk through your tracked apps and write annotations on the ones that warrant a note. Each annotation has:
+
+    - **Tags:** `concern`, `positive`, `follow_up`, `other`
+    - **Visibility:** `export` (will appear in the bundle) or `private` (never leaves your install)
+    - **Markdown:** linkify cited evidence; the markdown renders in the recipient's view too
+
+    A typical pattern: write an `export`-visibility note explaining the headline concern in neutral language, then a `private` note for your own thinking. Both stay attached to the same app on your install; only the first is in the bundle.
+  </Step>
+  <Step title="Export the bundle">
+    **Settings → Export → Audit bundle** prompts for:
+
+    - The apps to include (default: all)
+    - Whether to include your privacy profile (the tolerances you assessed against — useful for explaining *why* you flagged what you flagged)
+    - The free-text *attribution* field (your name as it'll appear next to your annotations on the recipient's view; defaults to *your friend* if blank)
+
+    Click Export, save the JSON.
+
+    What's never included: notes flagged `private`, your audience or goal selections, your flag overrides, your AI provider configuration or keys, your notification preferences.
+  </Step>
+  <Step title="Share the bundle securely">
+    Bundles are unencrypted JSON. Treat them like a personal email — once shared, the recipient can open them indefinitely, and there is no revocation mechanism. Recommended channels:
+
+    - End-to-end-encrypted messaging (Signal, iMessage)
+    - End-to-end-encrypted email
+    - Direct file transfer over a trusted local network
+
+    **Don't** paste the contents into public-facing tools (issue trackers, chat rooms, AI assistants). The bundle is plain text — `cat`-readable.
+
+    See [Security & trust → Audit-bundle export threat model](/security#audit-bundle-export-threat-model) for the full reasoning.
+  </Step>
+  <Step title="Recipient imports the bundle">
+    On the recipient's privacytracker install, **Onboarding → Import audit bundle** (or **Settings → Import → Audit bundle** if they're past first-run) accepts the file. They see your annotations attributed to the *attribution* string from step 3. They can edit or delete *their copy* of those notes — it does not affect the originals on your device.
+
+    The bundle's `version` field guards against schema mismatches: if their install is older than yours, the import refuses with a clear *upgrade required* message rather than silently misparsing.
+  </Step>
+  <Step title="What success looks like">
+    A shared frame of reference for the conversation. The recipient sees the apps you flagged, your reasoning in the export-visibility annotations, and (optionally) the privacy profile that made them concerning to you in the first place. Your `private` notes stay yours; the recipient's response notes stay theirs. No central server, no account creation, no ongoing data flow — just one JSON file passed once.
+  </Step>
+</Steps>
+
+## When none of these match
+
+Mix and match. The audience and goals can be changed any time without resetting your data; the install path can change via the [bundle migration flow](/backup-and-restore#migrating-between-install-paths); the audit-bundle workflow works between any two privacytracker installs regardless of audience.
+
+If you find yourself doing the same thing repeatedly and there isn't a recipe for it, [open an issue](https://github.com/privacykey/privacytracker/issues) describing the workflow — that's how this page grows.

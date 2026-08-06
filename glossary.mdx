@@ -1,0 +1,96 @@
+---
+title: Glossary
+description: "Domain terms used across privacytracker — what they mean and where they appear in the code."
+---
+
+A short reference for terms that show up across the app, the API, and the codebase. If you've just landed in `lib/`, this page is the fastest way to read prose around it.
+
+## Core data
+
+**App.** A single tracked iOS application. The primary key (`apps.id`) is the numeric Apple track ID extracted from `/id<digits>/` in the App Store URL — *not* a UUID. Snapshots, privacy rows, and notifications all key off this.
+
+**Privacy type.** Apple's top-level grouping in the App Privacy section — *Data Used to Track You*, *Data Linked to You*, *Data Not Linked to You*, *Data Not Collected*. Stored in the `privacy_types` table.
+
+**Privacy category.** A specific data category within a privacy type — *Location*, *Contact Info*, *Identifiers*, *Diagnostics*, etc. Stored in `privacy_categories`, foreign-keyed to `privacy_types`.
+
+**Severity tier.** Our colour-coded grouping of categories by sensitivity — `high` (precise location, sensitive contacts, financial info), `medium` (coarse location, contacts, search history), `low` (diagnostics, identifiers). Defined in `lib/privacy-meta.ts`'s `SEVERITY_CONFIG`.
+
+**Bundle ID.** Apple's reverse-DNS identifier for an app (`com.spotify.client`). Stored on `apps.bundleId`. Cosmetic — joins are by track ID.
+
+## Scrape and parse
+
+**Shelf.** Apple's name for a row of content on the App Store page. The privacy section is a shelf with `id="privacy"`. The parser walks `data[0].data.shelfMapping.privacyTypes.items` first, then falls back to two older nesting layouts, then finally to the historical Ember/FastBoot **shoebox** shape. Apple's HTML has changed shape several times; the fallback chain absorbs that.
+
+**Serialized server data.** The JSON payload Apple embeds in `<script id="serialized-server-data">` on every modern App Store page (introduced with the Nov 2025 redesign). Wraps as `{ data: [...], userTokenHash }` — always unwrap via `Array.isArray(raw) ? raw : raw.data`.
+
+**Shoebox.** The pre-redesign Ember/FastBoot pattern Apple used from Jan 2021 through Nov 2025. Privacy data lives inside `<script type="fastboot/shoebox" id="shoebox-media-api-cache-apps">`, in a JSON object keyed by Apple API request URLs whose values are JSON-encoded strings. Path to privacy: `d[0].attributes.privacy.privacyTypes` (note: `d` not `data`, direct array not `{items}`, and `dataCategories`/`dataCategory` instead of `categories`/`title`). The identifier enums are unchanged from the modern shape, so downstream snapshot diffing and severity styling work without translation. `extractFromShoebox` in `lib/scraper.ts` handles the rename. This is what lets the Wayback importer reach back to Q1 2021.
+
+**Manual app.** An app you tracked manually rather than via App Store scrape — e.g., for a regional app not available in your storefront. Stored in `manual_apps`, with its own scrape pipeline that doesn't talk to the iTunes Search API.
+
+## Snapshots and changes
+
+**Snapshot.** A frozen `PrivacyTypeSnapshot[]` for one app at one moment in time. Stored as JSON in `privacy_snapshots.snapshot_json`. Built from the database *after* a write completes (see `buildSnapshot()` in `lib/changelog.ts`).
+
+**Diff.** The human-readable change list between two snapshots (added/removed categories, severity shifts). Stored alongside the snapshot in `privacy_snapshots.changes_json`.
+
+**Change count.** Per-app counter of unacknowledged change events (`apps.changeCount`). Drives the bell badge. Decremented when the user acknowledges via `POST /api/apps/[id]/acknowledge`. Wayback imports skip the bump (back-dating shouldn't inflate the badge).
+
+**Trigger pill.** The little label on each timeline row showing what kicked off the snapshot — `scheduled`, `manual`, `import`, `wayback`, or `null` (legacy rows pre-migration). Driven by `privacy_snapshots.triggered_by`.
+
+**Matches live sync.** Green badge on a Wayback snapshot when its byte-identical content matches an adjacent live row. Means the archive and the live App Store page agree at that point in time. Computed in `getChangelog()` and surfaced via `matches_live_sync: true` on the row.
+
+## AI and policy
+
+**Policy version.** A captured version of a developer's privacy policy (URL, fetched text, SHA-256 hash, AI summary if generated). Stored in `policy_versions`. Re-summarisation only runs when the hash changes.
+
+**Lens.** One topic area an AI summary covers — `collection_scope`, `ads_marketing`, `third_party_sharing`, `retention`, `user_rights`, `children`, `security`, `disclosure`. Defined in `POLICY_TOPIC_GUIDES` in `lib/privacy-policy.ts`.
+
+**Chunking.** Splitting a long policy into ~12 KB pieces for small/local models. Triggered by the `providerLikelyNeedsChunking` flag in `lib/ai-config.ts`. Per-lens prompts are generated against each chunk and merged.
+
+**AI debug log.** Append-only diagnostic table showing every AI call's provider, model, prompt size, response status, and timing. Inspectable from **Settings → AI → Debug log** or `GET /api/ai/debug-log`.
+
+## Focus and feature flags
+
+**Focus.** The user's combined choice of *audience* and *goals*. Drives every default in the feature-flag resolver. Stored as four `app_settings` rows: `flag.focus.audience` plus three `flag.focus.goal.*` booleans.
+
+**Audience.** One of `self`, `loved_one`, `guardian`. Determines moderate-weight defaults across the resolver.
+
+**Goal.** Mutually exclusive primary goal (`understand`, `declutter`, `minimal`) plus an optional `accessibility` modifier. The modifier combines with whichever primary goal is active.
+
+**Hard default.** The value a flag falls back to before any rules apply. Defined in `HARD_DEFAULTS` in `lib/feature-flag-rules.ts`. The kill-switch (`flag.devopts.feature_flag_system.enabled = off`) collapses every flag to its hard default.
+
+**Override.** An explicit per-flag value set by the user in **Settings → Developer Options → Feature flags**. Stored in `feature_flag_overrides`. Always the final word in the resolution order.
+
+**Quarantined.** An override row whose `flag_key` isn't in the current version's `FlagKey` union. Set during the boot-time quarantine check; reactivated automatically if the key is reintroduced. Means a backup from a future version restored cleanly without polluting the resolver.
+
+## Bulk runners
+
+**Bulk runner.** One of three crash-safe loops that operates over many apps in series — *App Store sync* (`lib/sync-bulk-runner.ts`), *Wayback import* (`lib/wayback-bulk-runner.ts`), or *policy sync* (`lib/policy-bulk-runner.ts`). All three persist their queue and per-app state at every app boundary, so a process kill loses at most one app's worth of work.
+
+**Mutex.** The cross-request lock that prevents two runs of the same job from overlapping. Stored in `app_settings` under `sync_running`, `wayback_import_running`, and `policy_sync_running`.
+
+**State blob.** The JSON document persisting a runner's queue, totals, and `initiator` metadata. Stored in `app_settings` under `sync_bulk_state`, `wayback_bulk_state`, and `policy_bulk_state`. Survives a process kill; cleared on clean completion.
+
+**Initiator.** Where a run came from — `manual` (user clicked a button), `scheduled` (the 30-minute ticker), or `resume` (boot-time auto-resume after a crash). Surfaces in the UI as a "Resumed after restart" pill on resume runs.
+
+**Save Page Now (SPN).** archive.org's API for requesting a fresh capture of a URL. The Wayback importer fires this fire-and-forget when a quarter has no usable capture, so a future run can pick it up.
+
+## Notes and verdicts
+
+**Annotation.** A freeform per-app note. Supports markdown, soft-delete with 30-second undo, tags (`concern` / `positive` / `follow_up` / `other`), and per-note visibility (`export` / `private`). Stored in `annotations`.
+
+**Verdict.** A structured per-app judgement — `tracking_concern`, `acceptable`, `do_not_install`, plus an optional reason. Stored in `verdicts`. Distinct from annotations because verdicts are categorical and exportable in the audit bundle.
+
+**Audit bundle.** A versioned export of apps, labels, AI summaries, and exportable annotations + verdicts, suitable for sharing with a household member or a regulator. Available to the `audience: loved_one` workflow. Private notes (`visibility = 'private'`) are unconditionally excluded by SQL filter — there is no force-include path.
+
+**Shortlist.** A user-curated set of apps you want to keep an eye on without installing. Separate from tracked apps; you can shortlist an app you've never installed.
+
+## Distribution and runtime
+
+**Tauri.** The Rust framework that wraps the Next.js bundle as a signed, notarized desktop app on macOS. Uses Tauri's updater with ed25519 signature verification.
+
+**Sidecar.** The bundled Node runtime that ships inside the Tauri app — the same Next.js standalone bundle that runs in Docker, just launched as a child process by the Rust shell.
+
+**Standalone build.** The output of `npm run build:standalone` (with `BUILD_STANDALONE=1` set). Self-contained Next.js bundle suitable for the sidecar or any external runtime.
+
+**Admin token.** Optional shared secret (`AUDITOR_ADMIN_TOKEN`) that gates destructive routes when set. Verified with `crypto.timingSafeEqual`. Failed attempts log to `audit_log` with IP + user agent.

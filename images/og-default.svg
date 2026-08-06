@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="privacytracker docs">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a84ff"/>
+      <stop offset="100%" stop-color="#5e5ce6"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <g transform="translate(100, 220)">
+    <rect x="0" y="0" width="120" height="120" rx="28" fill="#FFFFFF" opacity="0.95"/>
+    <path d="M28 60l24 24 40-50" stroke="#0a84ff" stroke-width="10" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g transform="translate(260, 240)" font-family="Inter, system-ui, sans-serif" fill="#FFFFFF">
+    <text x="0" y="60" font-size="68" font-weight="700">privacytracker</text>
+    <text x="0" y="120" font-size="32" font-weight="400" opacity="0.9">Track iOS App Store privacy labels over time.</text>
+  </g>
+  <g transform="translate(100, 540)" font-family="Inter, system-ui, sans-serif" fill="#FFFFFF" opacity="0.7">
+    <text x="0" y="0" font-size="22" font-weight="500">docs.privacytracker.io</text>
+  </g>
+</svg>

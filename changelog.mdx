@@ -1,0 +1,60 @@
+---
+title: Changelog
+description: "Notable changes to privacytracker, version by version."
+---
+
+This page mirrors [`CHANGELOG.md`](https://github.com/privacykey/privacytracker/blob/main/CHANGELOG.md) in the main repo, which is generated automatically by `.github/workflows/release.yml` on every Run-workflow click of the Release action. The source is canonical; if anything diverges, trust the source.
+
+<Tip>
+  Looking for what's currently in flight (not yet released)? See the [privacytracker Plane board](https://sites.plane.so/issues/39b6604351894f09a5e903acce37d265).
+</Tip>
+
+## v1.1.0 — Feature flags + focus model
+
+Added the two-axis focus system that drives every user-facing surface in the
+app: audience (`self` / `loved_one` / `guardian`) × goals (`understand`,
+`declutter`, `minimal`, plus an `accessibility` modifier). Defaults resolve
+through a sparse rule engine in `lib/feature-flag-rules.ts`; any user can
+override individual flags via Settings → Developer Options → Feature flags.
+
+Highlights:
+
+- **New onboarding flow** — `/welcome` is now an audience picker, followed
+  by `/onboard/goals` for goals + accessibility. Skipping any step falls
+  back to sensible defaults; "Try with sample data" loads 10 demo apps in
+  sessionStorage so a brand-new install has something to explore.
+- **Migration** — existing users have their `user_intent` row mapped to
+  the new `flag.focus.audience` + `flag.focus.goal.*` keys eagerly on
+  startup. Failure surfaces a recoverable error UI; up to 3 retries before
+  a "Reset DB" escape hatch.
+- **Annotations** — per-app freeform notes with markdown, soft-delete +
+  30-second undo, tags (`concern` / `positive` / `follow_up` / `other`),
+  per-note visibility (`export` / `private`), debounced auto-save, and
+  full activity-log integration.
+- **Audit-bundle export** — `audience.loved_one` users can export apps +
+  labels + AI summaries + annotations as a versioned JSON file. Private
+  notes are unconditionally excluded by SQL filter. The recipient imports
+  via the new `/onboard` "Import audit bundle" method.
+- **Coachmark tour** — react-joyride-driven, goal-aware step inclusion.
+  Resumes mid-session via sessionStorage; replayable from `/help/focus`.
+- **Settings — Your focus card** at the top of Settings, with chips
+  showing current audience + goals and an Adjust button that opens the
+  pre-populated picker.
+- **Kill-switch** — `flag.devopts.feature_flag_system.enabled` reverts
+  every flag to its hard default if anything goes sideways post-release.
+- **Quiet hours** — per-audience defaults (`guardian` 22:00–07:00,
+  `loved_one` 21:00–08:00) deferring notifications via the new
+  `notifications.not_before` column.
+- **i18n infrastructure** — `next-intl` registered with English-only
+  locale bundle. The route tree is flat (no per-locale URL prefix); the
+  active locale is selected at render time from app settings.
+- **Bug-report template unification** — `privacy-policy.yml` folded into
+  `bug_report.yml` with a `report-type` dropdown + `current-flag-state`
+  field for Dev-Options-driven reports.
+
+Schema changes: new `feature_flag_overrides` and `annotations` tables;
+`notifications.not_before` column. All migrations run idempotently on boot
+via `instrumentation.ts`.
+
+Documentation: see [`.github/wiki/Feature-Flag-Inventory.md`](/develop/feature-flags)
+for the full design, rule tables, and PR breakdown.

@@ -1,0 +1,138 @@
+---
+title: Feature flags
+description: "The focus model — audience × goals × accessibility — and how it drives every user-facing surface."
+---
+
+Every user-facing surface in privacytracker is gated by the **focus system**: a layered resolver that takes the user's chosen audience and goals and produces a per-flag value that components consume via `useFlag()` or `resolveFlag()`.
+
+This page is the ergonomic summary. The full inventory and rollout reasoning live on the [privacytracker Plane board](https://sites.plane.so/issues/39b6604351894f09a5e903acce37d265).
+
+## The five-module split
+
+Next 16 will refuse to build if these get tangled. Don't break the layering.
+
+| Module | Role | Constraint |
+|---|---|---|
+| `lib/feature-flag-rules.ts` | Sparse rule tables: `HARD_DEFAULTS`, `AUDIENCE_RULES`, `GOAL_RULES`, `ACCESSIBILITY_RULES`, `FLAG_DEPENDENCIES`, `TOUR_STEPS` | Pure data + helpers. Server-safe. |
+| `lib/feature-flags.ts` | Resolver (`resolveFlag`, `setResolverContext`), override mutators, cache accessors | Server-safe. **No React imports.** |
+| `lib/feature-flags-hooks.ts` | `useFlag`, `useFocus` via `useSyncExternalStore` | `'use client'` only. Importing this from a Server Component fails the build. |
+| `lib/feature-flags-server.ts` | `getResolverContextFromDb`, `resolveFlagFromDb` | `'server-only'`. |
+| `lib/feature-flag-storage.ts` | SQLite reads/writes via better-sqlite3 | All synchronous. |
+
+## Flag-key convention
+
+All keys are lowercase, dot-separated, and prefixed `flag.` so they grep cleanly and won't collide with existing `app_settings` keys.
+
+```
+flag.<surface>.<area>.<feature>
+```
+
+Examples:
+
+```
+flag.dashboard.hero.attention_state
+flag.appgrid.filter.risk_buttons
+flag.detail.timeline.wayback_rows
+flag.detail.policy.ai_summary
+flag.onboarding.step.ai_summaries
+flag.settings.ai.debug_logging
+flag.notifications.resume.wayback
+flag.global.keyboard_shortcuts
+```
+
+Two reserved top-level keys (no surface):
+
+- `flag.focus.active` — the user's currently selected focus (enum, not boolean).
+- `flag.focus.overrides_count` — derived counter, used by the UI to show a "N custom overrides" hint. Not manually writable.
+
+## Storage model
+
+Two pieces of state.
+
+### Active focus
+
+Four rows in `app_settings`, representing a 2-axis model (audience × goals):
+
+```
+flag.focus.audience              = 'self' | 'loved_one' | 'guardian'
+flag.focus.goal.understand       = 'true' | 'false'
+flag.focus.goal.declutter        = 'true' | 'false'
+flag.focus.goal.minimal          = 'true' | 'false'   (mutually exclusive with understand/declutter)
+flag.focus.goal.accessibility    = 'true' | 'false'   (modifier — combines with any primary goal)
+```
+
+### Per-flag override
+
+```sql
+CREATE TABLE IF NOT EXISTS feature_flag_overrides (
+  flag_key        TEXT    PRIMARY KEY,
+  override_value  TEXT    NOT NULL,                          -- 'on' | 'off' | 'collapsed'
+  set_at          INTEGER NOT NULL,
+  set_by          TEXT    NOT NULL DEFAULT 'user',           -- 'user' | 'migration' | 'dev_preset' | 'restore'
+  previous_focus  TEXT,                                       -- audience+goals snapshot at the time of override
+  quarantined     INTEGER NOT NULL DEFAULT 0                  -- 1 if the flag_key is unknown to this app version
+);
+```
+
+Overrides are **explicit** — an absent row means "inherit the computed default from audience + goals". This is what lets dev options show derivation (*"on · because `goal.understand`"*) and spot overrides (*"off (custom) · would be on because `goal.understand`"*) without mutating any focus config.
+
+`'collapsed'` is a third legal value for flags that model "visible but not expanded by default" — accordions, privacy-type cards, the a11y panel, the risk-tier legend. Roughly 8–12 flags use it; the rest stay boolean.
+
+## Resolution order
+
+Layered. Each step may override the previous:
+
+```
+resolveFlag(key):
+  value ← HARD_DEFAULTS[key]
+  value ← AUDIENCE_RULES[audience][key]      ?? value
+  for goal in active goals:
+    value ← GOAL_RULES[goal][key]            ?? value
+  if accessibility modifier on:
+    value ← ACCESSIBILITY_RULES[key]         ?? value
+  value ← runtime checks (Tauri, dependencies) ?? value
+  value ← user override                       ?? value   // final word
+```
+
+User overrides are always the final word.
+
+## Adding a flag
+
+Three edits, in this order:
+
+<Steps>
+  <Step title="Add the key to the union">
+    In `lib/feature-flag-rules.ts`, add it to the `FlagKey` union. Typos will fail at `tsc`.
+  </Step>
+  <Step title="Add a HARD_DEFAULTS entry">
+    Every key needs a hard default — that's what the kill-switch falls back to.
+  </Step>
+  <Step title="Add rules only if behaviour differs">
+    Only populate `AUDIENCE_RULES`, `GOAL_RULES`, or `ACCESSIBILITY_RULES` when the value should differ from the hard default for a given input. Most flags don't care about most inputs — keep the tables sparse.
+  </Step>
+</Steps>
+
+## Migration (v1.1)
+
+Migration runs eagerly in `instrumentation.ts` in 5 ordered steps:
+
+1. **Schema check** — `CREATE TABLE IF NOT EXISTS feature_flag_overrides` plus any new `app_settings` indices.
+2. **`user_intent` → audience+goals** — read the legacy key, write `flag.focus.audience` + `flag.focus.goal.*`, drop `user_intent`.
+3. **`notification_prefs` absorb** — read the JSON blob, write each notification type as `flag.notifications.types.*` rows, drop the blob.
+4. **Callout rename** — drop override rows for old keys without carrying their values across.
+5. **Quarantine check** — scan `feature_flag_overrides` for rows whose `flag_key` isn't in the registry's `FlagKey` union, mark them `quarantined = 1`. Conversely, rehabilitate previously-quarantined rows whose keys are now known.
+
+Each step is idempotent. Failures abort the migration and surface an error UI with the failing step name. Up to 3 retries; after that, the error screen offers a "Reset DB" escape hatch.
+
+## Kill-switch
+
+```
+flag.devopts.feature_flag_system.enabled = off
+```
+
+Collapses every flag to its hard default. Use this if a release misbehaves; flipping it back on re-engages the rule engine without a code rollback.
+
+## Related
+
+- **Annotations** (`annotations` table) sit on top of the flag system. Private notes (`visibility = 'private'`) are unconditionally excluded from audit-bundle exports at the SQL level — there is no force-include path.
+- **Audit bundle export** (`lib/audit-bundle.ts`) honours visibility, focus state, and quarantined overrides.

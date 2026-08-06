@@ -1,0 +1,110 @@
+---
+title: Installation
+description: "Detailed install paths for self-hosters — signed desktop app, Homebrew cask, or Docker."
+---
+
+privacytracker ships three install paths from one Next.js bundle. Pick whichever matches how you usually run things.
+
+<Note>
+  If you want to run privacytracker from a source checkout (for development or platforms we don't ship binaries for), see [Build from source](/develop/build-from-source) under the Develop tab.
+</Note>
+
+<Tabs>
+  <Tab title="Desktop app (macOS)">
+    Signed and notarized for both Apple Silicon (`aarch64`) and Intel (`x86_64`).
+
+    <Steps>
+      <Step title="Download the latest .dmg">
+        From [github.com/privacykey/privacytracker/releases/latest](https://github.com/privacykey/privacytracker/releases/latest).
+      </Step>
+      <Step title="Open and drag to /Applications">
+        Gatekeeper opens it without the "unidentified developer" warning because the build is signed with a Developer ID certificate and notarized by Apple.
+      </Step>
+      <Step title="Launch privacytracker">
+        The SQLite database is created at `~/Library/Application Support/privacytracker/` and survives app updates.
+      </Step>
+    </Steps>
+
+    Auto-updates use [Tauri's updater](https://tauri.app/) with an ed25519 signature check on every patch.
+  </Tab>
+
+  <Tab title="Homebrew (macOS)">
+    ```bash
+    brew tap privacykey/tap
+    brew install --cask privacytracker
+    ```
+
+    Installs the same signed `.app` bundle into `/Applications`.
+
+    ```bash
+    brew upgrade --cask privacytracker
+    brew uninstall --cask privacytracker
+    ```
+  </Tab>
+
+  <Tab title="Docker (Linux / macOS)">
+    Production-ready, with the SQLite DB bind-mounted so data survives container rebuilds.
+
+    ```bash
+    git clone https://github.com/privacykey/privacytracker.git
+    cd privacytracker
+    docker compose up --build -d
+    docker compose logs -f
+    ```
+
+    Container healthchecks hit `GET /api/ready` (DB reachable + data dir writable). The DB lives at `./data/privacy.db` on the host.
+  </Tab>
+</Tabs>
+
+<Note>
+  Windows and Linux desktop builds aren't published yet. For those platforms, use Docker, or [build from source](/develop/build-from-source) on the platform of your choice.
+</Note>
+
+## Colima
+
+On macOS without Docker Desktop, [Colima](https://github.com/abiosoft/colima) gives you a lightweight Linux VM:
+
+```bash
+brew install colima docker docker-compose
+colima start --cpu 2 --memory 4
+docker compose up --build -d
+```
+
+Stop the VM with `colima stop` when you're done; data in the bind-mounted `./data/privacy.db` persists.
+
+## iPhone import helper
+
+Companion Python tool (stdlib-only, Python 3.9+) that exports installed-app lists from local Finder/iTunes backups or a connected iPhone via `ideviceinstaller`. It's not wired into the running app — it produces a `.txt` or `.csv` you feed back into the web onboarding flow.
+
+```bash
+# From a Finder / iTunes backup
+python3 tools/ios-app-import/export_ios_apps.py --mode backup
+
+# From a connected device (requires libimobiledevice)
+python3 tools/ios-app-import/export_ios_apps.py --mode device
+```
+
+You can run the helper from the source repo even when the rest of privacytracker is installed as a desktop app or Docker container — its output is just a text file the web onboarding accepts.
+
+## Behind a reverse proxy
+
+For trusted-LAN deployments, the project ships sample Caddy and Traefik configs. The headline rule is simple: privacytracker enforces a same-origin CSRF check on every destructive route, so the proxy must forward the original `Host` header. See the [Reverse Proxy guide on the Plane board](https://sites.plane.so/issues/39b6604351894f09a5e903acce37d265) for working samples.
+
+## Verify the install
+
+```bash
+curl http://localhost:3000/api/ready
+# {"ok":true,"db":"reachable","data":"writable"}
+```
+
+If you get `{"ok":false}`, check write permissions on the `data/` directory and confirm the process can open `data/privacy.db`. WAL mode plus a 5-second `busy_timeout` are set on every open, so concurrent reads while a write is in flight should never block longer than that.
+
+## Where the data lives
+
+| Surface | Database path |
+|---|---|
+| Desktop app (macOS) | `~/Library/Application Support/privacytracker/privacy.db` |
+| Docker | `./data/privacy.db` on the host (bind-mounted) |
+| From source | `./data/privacy.db` in the repo working directory |
+
+The database is a single SQLite file. Back it up by copying the file (with the app stopped, or via the in-app **Settings → Backup** export which produces a versioned JSON snapshot you can restore later).

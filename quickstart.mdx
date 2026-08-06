@@ -1,0 +1,135 @@
+---
+title: Quickstart
+description: "Install privacytracker and import your first apps in about five minutes — no source build required."
+---
+
+privacytracker is designed to be self-hosted on your own machine. The fastest path is a signed prebuilt binary or a Docker container — pick whichever fits how you usually run things.
+
+<Note>
+  If you want to build privacytracker from source — for development, a custom build, or a platform we don't ship binaries for yet — see the [Develop section](/develop/overview).
+</Note>
+
+<Frame caption="First-run audience picker">
+  ![Onboarding audience picker](/images/onboarding-audience.png)
+</Frame>
+
+## Pick how to run it
+
+<Tabs>
+  <Tab title="Desktop app (macOS)">
+    Signed and notarized for both Apple Silicon and Intel. The simplest path on a Mac.
+
+    <Steps>
+      <Step title="Download the latest .dmg">
+        Grab the latest release from [github.com/privacykey/privacytracker/releases/latest](https://github.com/privacykey/privacytracker/releases/latest).
+      </Step>
+      <Step title="Drag privacytracker into /Applications">
+        Gatekeeper opens it without warning — the build is Developer ID signed and notarized by Apple.
+      </Step>
+      <Step title="Launch privacytracker">
+        Auto-updates are handled by the Tauri updater with an ed25519 signature check on every patch. The SQLite database lives at `~/Library/Application Support/privacytracker/` and survives app updates.
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="Homebrew (macOS)">
+    For people who already manage tools with `brew`:
+
+    ```bash
+    brew tap privacykey/tap
+    brew install --cask privacytracker
+    ```
+
+    Installs the same signed `.app` bundle into `/Applications`. Upgrade with `brew upgrade --cask privacytracker`.
+  </Tab>
+
+  <Tab title="Docker (Linux / macOS / NAS)">
+    Best for self-hosting on a server, NAS, or LAN-trusted machine.
+
+    ```bash
+    git clone https://github.com/privacykey/privacytracker.git
+    cd privacytracker
+    docker compose up --build -d
+    ```
+
+    The SQLite database is bind-mounted at `./data/privacy.db` on the host, so your data survives container rebuilds.
+
+    Open [http://localhost:3000](http://localhost:3000).
+
+    On macOS without Docker Desktop, [Colima](https://github.com/abiosoft/colima) is a lightweight alternative — see [Installation](/installation#colima) for the full setup.
+  </Tab>
+</Tabs>
+
+## Import your first apps
+
+Whichever way you installed it, the in-app workflow is the same.
+
+<Steps>
+  <Step title="Pick an audience and goals">
+    First-run onboarding asks who you're tracking apps for (`self`, `loved one`, `guardian`) and what you want to focus on (`understand`, `declutter`, `minimal`, plus an optional `accessibility` modifier). These choices tune the UI, and a short goal-aware guided tour highlights the surfaces they unlock — dismiss it any time and replay it later from the focus tour at `/help/focus`.
+
+    Changed your mind? Re-pick audience and goals from the **Your focus** card at the top of **Settings** via its **Adjust** button. Individual feature flags can be fine-tuned separately under **Settings → Developer Options → Feature flags**.
+  </Step>
+  <Step title="Add apps by name or URL">
+    Type app names — privacytracker hits the iTunes Search API and shows ranked candidates to confirm. You can also paste App Store URLs directly, or upload a `.txt` / `.csv` from the [iPhone import helper](/installation#iphone-import-helper).
+
+    Not ready to add your own yet? Choose **Try with sample data** in onboarding to load 10 demo apps so you can explore the dashboard, Privacy Map, and timelines first. The demo set is session-only — it clears itself when you restart or once you start adding real apps, so it never mixes into your data.
+  </Step>
+  <Step title="(Optional) Configure an AI provider">
+    Skip this if you only want label tracking. To get developer-policy summaries, head to **Settings → AI** and pick a provider:
+
+    - **OpenAI** — paste an API key.
+    - **Anthropic** — paste an API key.
+    - **Own model** — point the base URL at any OpenAI-compatible endpoint. The simplest local setup is:
+
+    ```bash
+    ollama pull llama3.2
+    ollama serve
+    # In Settings → AI:
+    #   Provider: Own Model
+    #   Base URL: http://localhost:11434
+    #   Model:    llama3.2
+    ```
+  </Step>
+  <Step title="Watch the timeline">
+    Each app gets a per-app detail page with a chronological snapshot timeline, a category-trend chart, and a "matches live sync" badge when an archived snapshot agrees with the current scrape. Re-scrape an app from the detail page to produce a change notification you can see in the bell.
+  </Step>
+</Steps>
+
+<Frame caption="AI settings for choosing a provider">
+  ![AI provider settings](/images/settings-ai.png)
+</Frame>
+
+<Frame caption="App detail timeline after a few syncs">
+  ![App detail change timeline](/images/app-detail-timeline.png)
+</Frame>
+
+## Verify it's healthy
+
+<Frame caption="Dashboard after importing sample apps">
+  ![Dashboard overview](/images/dashboard-overview.png)
+</Frame>
+
+```bash
+curl http://localhost:3000/api/ready
+# {"ok":true,"db":"reachable","data":"writable"}
+```
+
+`GET /api/ready` is the readiness probe (DB reachable + data dir writable). `GET /api/health` is the cheaper liveness probe used by uptime checks.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="All install paths" icon="download" href="/installation">
+    Detailed setup for desktop, Homebrew, Docker, and behind a reverse proxy.
+  </Card>
+  <Card title="Configure AI providers" icon="sparkles" href="/configuration#ai-providers">
+    Add OpenAI, Anthropic, or a local model — tune timeouts, chunking, and debug logging.
+  </Card>
+  <Card title="Back-fill historical labels" icon="clock-rotate-left" href="/configuration#wayback-import">
+    Pull every quarter of label history Apple has published since February 2021 — the earliest era when Apple shipped privacy nutrition labels in the App Store HTML.
+  </Card>
+  <Card title="Build from source" icon="code" href="/develop/build-from-source">
+    Run privacytracker from a checkout — for development or unsupported platforms.
+  </Card>
+</CardGroup>

@@ -1,0 +1,161 @@
+---
+title: privacytracker vs alternatives
+description: "An evenhanded look at privacytracker, the things it overlaps with (Apple's labels and Privacy Report, ToS;DR, PrivacySpy, Exodus Privacy), and when each is the better fit."
+---
+
+privacytracker isn't the only way to think harder about app privacy. This page lays out what it does well, what other tools do better, and where you'd genuinely want both. The goal is to help you decide whether to install it — including the "actually, no" answer when something else fits your situation better.
+
+<Note>
+  We've made a sincere effort to characterise each alternative accurately. If you maintain one of these projects and we've described it unfairly, please [open an issue](https://github.com/privacykey/privacytracker-docs/issues) so we can fix it.
+</Note>
+
+## What privacytracker is good at
+
+- **Tracking change over time.** Snapshots every label after each scrape, diffs against the previous, surfaces the diff in a bell. This is the headline feature; nothing else listed below does this for App Store labels.
+- **Self-hosted, local-first.** Your data stays on your machine. No account, no cloud, no telemetry. The signed desktop app, Homebrew cask, and Docker image all run from one open-source codebase.
+- **iOS-specific.** Reads Apple's privacy-label payload directly, with a fallback chain that absorbs HTML reshaping. Other tools generalise across platforms or focus on TOS text rather than the App Store labels themselves.
+- **Optional AI summarisation under your control.** You bring the provider — OpenAI, Anthropic, or any local OpenAI-compatible endpoint (Ollama, LM Studio, llama.cpp). Re-summarisation only fires when the policy hash changes, so cost stays bounded.
+- **Audit-bundle workflow for households / regulators.** A versioned JSON export for sharing a curated subset — see the [cookbook](/cookbook) for the partner-review and audit-prep recipes.
+
+## What privacytracker isn't
+
+- Not an Android tool (Apple App Store only).
+- Not a one-click privacy score. We surface labels, changes, and policy summaries; we don't reduce them to a single number, because the right judgement depends on your situation.
+- Not a TOS analyser. We summarise privacy policies (what data is collected and why), not the rest of the terms-of-service surface (arbitration clauses, indemnification, content licences).
+- Not a tool you delegate trust to. It helps you look more rigorously; you still have to look.
+
+## Alternatives by situation
+
+### "I just check the App Privacy section on each App Store page myself."
+
+That's a reasonable baseline. Apple displays the same privacy data privacytracker scrapes; you can read it yourself for free, no install needed. (privacytracker auto-detects the embedding format: the modern `serialized-server-data` JSON blob on the Nov 2025+ web App Store, or the older Ember/FastBoot `shoebox-media-api-cache-apps` shape on archive.org captures going back to Q1 2021.)
+
+You'd choose privacytracker over reading-it-yourself when:
+
+- You track more than a handful of apps and want change notifications instead of remembering to re-check.
+- You want history — Apple shows you the *current* labels, not what they used to be.
+- You want to compare apps side-by-side, not tab-flip between App Store pages.
+- You want a single audit-bundle export covering everything you've reviewed.
+
+You'd skip privacytracker when:
+
+- You're tracking five apps and re-checking is fine.
+- You don't trust running a local app to read public web pages on your behalf (which would also rule out a feed reader).
+
+### Apple's built-in **App Privacy Report** (Settings → Privacy & Security → App Privacy Report on iOS 15.2+)
+
+A different angle: Apple's report shows what apps *actually do* on your device — domains contacted, sensors accessed, data accessed in the past seven days. It's behavioural, not declarative.
+
+| | App Privacy Report | privacytracker |
+|---|---|---|
+| **What it shows** | Real network + sensor activity on your device | What developers *say* they collect, plus their policy text |
+| **Coverage** | Apps installed on the iPhone running the report | Any iOS app with an App Store listing, installed or not |
+| **Scope** | Past 7 days, on-device | Full history (with Wayback back-fill to Q1 2021), self-hosted |
+| **Best for** | "Is this app secretly phoning home right now?" | "What does this developer claim, and how has the claim changed?" |
+| **Limitation** | Resets every 7 days; only on iOS; no cross-app comparison | Trusts the developer's disclosure — you'll miss undeclared collection |
+
+These are complementary, not competing. The App Privacy Report tells you *what's happening*; privacytracker tells you *what's been promised*. A gap between the two is itself a finding.
+
+### **ToS;DR** — *Terms of Service; Didn't Read* — [tosdr.org](https://tosdr.org)
+
+A long-running community project that grades terms of service and privacy policies. Volunteers annotate clauses (good practice, blocker, anti-pattern) and the site assembles them into a letter grade per service. Browser extensions surface the grade in-page when you visit the service's website.
+
+What ToS;DR does better than privacytracker:
+
+- Cross-platform — covers websites, services, and apps across iOS, Android, web.
+- Human-curated, with linked annotations explaining each clause and why it matters.
+- Shows you the assessment up front when you visit the service's site (via the extension).
+- Free, no install required for the core experience.
+
+What privacytracker does that ToS;DR doesn't:
+
+- Tracks changes to the App Store privacy *labels* specifically — ToS;DR reviews TOS prose, which moves at a different cadence and contains different information.
+- Covers apps without an existing ToS;DR review (long tail).
+- Self-hosted history and audit-bundle workflow.
+
+If you're choosing between them: install both. ToS;DR's browser extension catches services you visit on the web; privacytracker handles the iOS-specific labels and history workflow. If your time only allows one, ToS;DR has broader coverage and zero install cost; privacytracker is more useful when iOS-specific change tracking is the actual job.
+
+### **PrivacySpy** — [privacyspy.org](https://privacyspy.org)
+
+A privacy-policy analysis project that scores services against a transparent rubric. Like ToS;DR, it's community-curated; unlike ToS;DR, the rubric is more structured and the per-service score is broken down into categories.
+
+What PrivacySpy does better:
+
+- Scoring rubric is explicit — you can see exactly how a score was derived, line by line.
+- Coverage extends beyond apps to general online services.
+- Bookmarks-aware: you can score a service you care about and watch for rubric updates.
+
+What privacytracker does that PrivacySpy doesn't:
+
+- Per-app *App Store label* tracking (PrivacySpy reads policy text; Apple's privacy labels are a separate disclosure surface).
+- Diffs and change notifications keyed to the iOS App Store.
+- Self-hosted; PrivacySpy is a hosted web service.
+
+Choose PrivacySpy when you want a structured rubric you can argue with. Choose privacytracker when iOS-specific label tracking and self-hosting matter.
+
+### **Exodus Privacy** — [exodus-privacy.eu.org](https://exodus-privacy.eu.org)
+
+A French non-profit that statically analyses Android APKs to enumerate the trackers each app embeds (AdMob, Firebase Analytics, Facebook SDK, etc.). Reports are public and searchable.
+
+This is the closest analogue to privacytracker's spirit — empirical, public, change-tracking — but for Android, and at the binary-analysis layer rather than the App Store label layer.
+
+What Exodus does:
+
+- Decompiles Android APKs to identify embedded SDKs/trackers.
+- Maintains a public database queryable by app name or package ID.
+- Catches *what an app actually contains*, not just what the developer declares.
+- Cross-device — you don't need an Android phone to query their database.
+
+privacytracker is the iOS counterpart — Apple's signing model and App Store delivery mean equivalent decompilation isn't really feasible for sideload-free iOS apps, so privacytracker reads the *declared* labels and tracks how they change instead.
+
+If you have devices on both platforms: Exodus for Android, privacytracker for iOS, App Privacy Report for behavioural cross-reference on iOS. The three answer different questions.
+
+### **Just disabling tracking in iOS Settings**
+
+Settings → Privacy & Security → Tracking → *Allow Apps to Request to Track* off. This denies the IDFA to apps and is genuinely effective at limiting cross-app advertising tracking.
+
+It does not:
+
+- Prevent apps from collecting first-party data they were going to collect anyway.
+- Surface apps that suddenly start declaring new categories.
+- Tell you anything about retention, sharing with third parties, or children-specific protections.
+
+Use it. It's free, fast, and reduces real harm. It's also not a substitute for understanding what each app collects.
+
+## Decision matrix
+
+Quick guide if you only want to install one tool:
+
+| Your situation | Best fit |
+|---|---|
+| I want change notifications when an iOS app's privacy labels shift | **privacytracker** |
+| I want a letter grade on a service before signing up | **ToS;DR** |
+| I want a transparent rubric I can argue with | **PrivacySpy** |
+| I need to know what's actually phoning home from my iPhone right now | **Apple App Privacy Report** |
+| I want to know what trackers are embedded in an Android app | **Exodus Privacy** |
+| I want to share a curated review with a household member | **privacytracker** |
+| I'm preparing evidence for a regulator or DPIA | **privacytracker** (specifically for the audit-bundle + Wayback back-fill) |
+| I'm fine eyeballing five apps once a quarter | **None of the above** |
+
+## Working in concert
+
+The most informed setup uses several of these together:
+
+- **privacytracker** running locally for iOS label tracking + history.
+- **App Privacy Report** on the iPhone for behavioural cross-reference.
+- **ToS;DR** browser extension when browsing services.
+- **Exodus Privacy** for any Android device you also use.
+
+Each one closes a gap the others leave open. If you only have time for one, use the table above.
+
+## When you wouldn't use privacytracker
+
+To be clear about it: skip privacytracker when
+
+- You're not on iOS and don't need iOS coverage.
+- You're tracking five apps and the App Store page is fine.
+- You don't want to run a local app at all (Docker, desktop, source) — there's no hosted version.
+- You'd rather a single grade than a granular label history.
+- You're looking for behavioural / network-level evidence rather than declarative label evidence — see App Privacy Report or PiHole-style traffic logging instead.
+
+There's no shame in concluding it's the wrong tool for the job. We'd rather you use ToS;DR and be happy than install privacytracker and resent the Docker container running on your NAS.

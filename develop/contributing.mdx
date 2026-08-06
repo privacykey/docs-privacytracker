@@ -1,0 +1,173 @@
+---
+title: Contributing
+description: "How to pick an issue, run the tests that matter, and open a PR that merges quickly."
+---
+
+privacytracker is open source and contributions are welcome. This page covers the practical workflow — what to install, what to run before opening a PR, and what makes a good change.
+
+If you're new to the codebase, start with [Build from source](/develop/build-from-source) and [Architecture](/develop/architecture).
+
+## Where the action is
+
+The contribution areas with the highest leverage and the lowest barrier:
+
+<CardGroup cols={2}>
+  <Card title="Privacy-label parser fixes" icon="bug">
+    When Apple changes their HTML, the parser breaks. These fixes are usually 5-10 lines in `lib/scraper.ts` plus a regression test against a captured payload.
+  </Card>
+  <Card title="New locale" icon="language">
+    Translations round-trip through Crowdin. A new language is one Crowdin add + one config row + one placeholder JSON. See [Translations](/develop/translations).
+  </Card>
+  <Card title="Dashboard widgets / charts" icon="chart-line">
+    `app/components/charts/` is self-contained. Most charts read from `/api/stats/*` and follow the same data-fetch + ECharts render pattern.
+  </Card>
+  <Card title="Documentation" icon="book">
+    This site! Pages live in the docs repo (separate from the main codebase). Improvements to clarity, examples, screenshots, or new troubleshooting entries are very welcome.
+  </Card>
+</CardGroup>
+
+## Setup
+
+<Steps>
+  <Step title="Fork and clone">
+    Fork [github.com/privacykey/privacytracker](https://github.com/privacykey/privacytracker), then:
+
+    ```bash
+    git clone git@github.com:<your-username>/privacytracker.git
+    cd privacytracker
+    git remote add upstream https://github.com/privacykey/privacytracker.git
+    ```
+  </Step>
+  <Step title="Install Node 24 + dependencies">
+    ```bash
+    nvm install 24 && nvm use 24
+    npm install
+    npm run dev   # http://localhost:3000
+    ```
+
+    See [Build from source](/develop/build-from-source) for the full prerequisites if `npm install` fails.
+  </Step>
+  <Step title="Create a branch">
+    Branch names follow `<type>/<short-description>`:
+
+    ```bash
+    git checkout -b fix/scraper-shelfMapping-fallback
+    git checkout -b feat/japanese-locale
+    git checkout -b docs/troubleshooting-429-section
+    ```
+
+    `<type>` is one of `fix`, `feat`, `chore`, `docs`, `test`, `refactor`.
+  </Step>
+</Steps>
+
+## What to run before opening a PR
+
+The full pre-flight is fast — run all four:
+
+```bash
+npm run lint        # ESLint flat config for Next 16
+npm run typecheck   # tsc --noEmit
+npm test            # focused node:test suite
+npm run lint:i18n   # locales/*.json key parity against en.json
+```
+
+If you touched build configuration (`next.config.js`, `tsconfig.json`, `package.json`):
+
+```bash
+npm run build       # production build, catches Next config errors
+```
+
+If you touched `tools/ios-app-import/`:
+
+```bash
+npm run test:ios-import-helper
+```
+
+If you touched `src-tauri/` (the Rust desktop shell):
+
+```bash
+npm run test:tauri
+```
+
+CI runs all of these on PR open. Running them locally first saves a round trip.
+
+## What makes a good PR
+
+Three things, in priority order.
+
+**The change should be small enough to review in one sitting.** If your branch touches a parser, a UI component, a chart, and a migration, that's four PRs. Reviewers approve smaller PRs faster, and bisecting later is easier.
+
+**Tests for parser changes are non-negotiable.** Apple's HTML is volatile. The pattern in `tests/scraper.test.ts` is to drop a captured payload into `tests/fixtures/scraper/` and assert against parsed output. When you fix a parser bug, capture the payload that was breaking, and add a test against it — that prevents regression next time Apple iterates.
+
+**Database changes need both `CREATE TABLE` and `migrations` updates.** Forgetting one breaks upgrade paths for existing installs. The pattern is in `lib/db.ts`; copy it.
+
+## Picking an issue
+
+Issues labelled `good first issue` are scoped for someone new to the codebase. `help wanted` is broader — anything we'd merge but haven't gotten to.
+
+If you want to propose something not in an existing issue, open a discussion first for anything beyond a small fix. Saves you the disappointment of a no-merge after the work.
+
+## Privacy-label parser fixes
+
+Most parser breakage takes one of two forms:
+
+| Symptom | Fix |
+|---|---|
+| **App's labels stop appearing entirely** | Apple changed the shelf shape. Walk the three-layer fallback chain in `saveToDb`; the breaking change is usually a renamed key (`shelfMapping` → `something_else`) or a new wrapper object. |
+| **Privacy-policy link not detected** | Apple's "Developer's Privacy Policy" aria-label sometimes uses a curly `'` instead of straight `'`, or localised aria-labels diverge. Widen the regex in `lib/scraper.ts → extractPrivacyPolicyUrl`. |
+
+Always include the failing App Store URL in the PR description so reviewers can verify the fix without a separate hunt.
+
+## Dashboard widgets and charts
+
+`app/components/charts/` follows a consistent pattern:
+
+1. Component takes typed props derived from a `/api/stats/*` shape.
+2. Data fetch happens in the parent (server component) and is passed in via props — no client-side fetch.
+3. Theme tokens (severity colours, focus states) come from `lib/privacy-meta.ts` — not from inline hex codes.
+4. ECharts options are constructed in a memoised helper for testability.
+
+Adding a new chart usually means: add a `/api/stats/<name>` route (thin wrapper over a `lib/stats/<name>.ts` helper), add the component under `app/components/charts/`, register it in the dashboard layout under the correct feature flag.
+
+## Adding a locale
+
+Most of the work is in Crowdin, not the repo. Editing translations directly is fine but the flow that scales is:
+
+<Steps>
+  <Step title="Add the language in Crowdin">
+    Project Settings → Target Languages → add. Wait for the next workflow run to upload `locales/en.json` so the language appears in the project tree.
+  </Step>
+  <Step title="Add the bundle row">
+    `crowdin.yml` → `languages_mapping.two_letters_code`: add the row only if Crowdin's ID doesn't match your bundle filename (e.g. `pt-BR: pt-br` for `pt-br.json`; nothing needed for plain `es: es`).
+  </Step>
+  <Step title="Register in next-intl">
+    Add the new locale to the supported list in `i18n.ts` so the bundle gets loaded.
+  </Step>
+  <Step title="Drop a placeholder JSON">
+    `locales/<new>.json` containing `{}` — next-intl needs the file to exist before its dynamic import resolves. The first build will use English fallbacks for every key until Crowdin populates the bundle.
+  </Step>
+</Steps>
+
+Full details in [Translations](/develop/translations).
+
+## Code style
+
+A few conventions to know before you open a PR:
+
+- **No CSS-in-JS or styled-components.** Tokens and severity styling live in `app/globals.css` and `lib/privacy-meta.ts`. Reuse those rather than inlining new colours.
+- **`@/*` is the path alias.** It maps to the repo root. Use it instead of `../../../lib/foo`.
+- **Server-only modules go in `lib/` with the `'server-only'` import where they must not be bundled.** Examples: `lib/feature-flags-server.ts`. Importing one of these from a Client Component fails the build.
+- **All DB writes through transactions.** Multi-step writes use `db.transaction(() => { … })()`. Don't open ad-hoc connections.
+- **Tests use `node:test` plus `tsx`.** Run via `npm test`. Look at `tests/setup-env.ts` for the standard env shape.
+- **Don't add new top-level dependencies casually.** Privacy is the value prop; every dep is a supply-chain question. Justify in the PR description.
+
+## Reporting issues vs. opening PRs
+
+Bug reports are valuable on their own — you don't have to fix what you found.
+
+- **Bugs and feature requests:** [github.com/privacykey/privacytracker/issues](https://github.com/privacykey/privacytracker/issues), `bug_report.yml` template. Paste your support bundle (**Settings → Diagnostics → Copy support bundle**) — it has system info, app version, sync state, and the most recent activity log without any of your tracked apps' data.
+- **Security findings:** [GitHub Private Vulnerability Reporting](https://github.com/privacykey/privacytracker/security/advisories/new). Don't open a public issue for security.
+
+## Code of conduct
+
+privacytracker follows the [Contributor Covenant](https://www.contributor-covenant.org/). Be kind. Critique code, not people. Maintainers may close issues or PRs that don't meet that bar — but the bar is just "treat people the way you'd want to be treated." It's not high.

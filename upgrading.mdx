@@ -1,0 +1,171 @@
+---
+title: Upgrading
+description: "What to expect when you upgrade privacytracker — what runs automatically on boot, what to check manually, how to roll back."
+---
+
+privacytracker takes a *forward-only, automatic-on-boot* approach to upgrades. New releases bring schema migrations that run idempotently in `instrumentation.ts` on startup, so almost every upgrade is just *get the new binary or image, restart, done*.
+
+This page covers the version-agnostic process. For per-release notes — what specifically changed, breaking changes if any — see the [Changelog](/changelog).
+
+## The general flow
+
+<Steps>
+  <Step title="Take a backup before the upgrade">
+    A reflex worth practising even when migrations are reliable. The simplest version:
+
+    ```bash
+    # Desktop app
+    cp ~/Library/Application\ Support/privacytracker/privacy.db ~/backups/privacy-pre-upgrade-$(date +%F).db
+
+    # Docker
+    cp data/privacy.db data/privacy.db.pre-upgrade
+
+    # From source
+    cp data/privacy.db ../privacy.db.pre-upgrade
+    ```
+
+    Or use **Settings → Backup → Export bundle** for a versioned JSON copy. See [Backup & restore](/backup-and-restore) for the bundle format.
+  </Step>
+  <Step title="Pull the new release">
+    Pick the path that matches your install:
+
+    ```bash
+    # Desktop app — Tauri auto-update fetches in the background.
+    # Or manually: download the latest .dmg from
+    # github.com/privacykey/privacytracker/releases/latest
+
+    # Homebrew
+    brew upgrade --cask privacytracker
+
+    # Docker
+    docker compose pull
+    docker compose up -d
+
+    # From source
+    git pull --ff-only
+    npm install   # in case dependencies moved
+    npm run build
+    ```
+  </Step>
+  <Step title="Watch boot logs for the migration line">
+    `instrumentation.ts` writes one activity row per migration step. The aggregate row at the end looks like:
+
+    ```
+    migration_v1_completed: 5/5 steps, total: 412ms
+    ```
+
+    From the UI: **Settings → Diagnostics → Activity log → filter `migration_*`**. From the CLI:
+
+    ```bash
+    sqlite3 data/privacy.db \
+      "SELECT datetime(at/1000, 'unixepoch'), kind, details FROM activity WHERE kind LIKE 'migration_%' ORDER BY at DESC LIMIT 20;"
+    ```
+
+    If the aggregate row says *N/N steps*, you're done.
+  </Step>
+  <Step title="Verify health">
+    ```bash
+    curl http://localhost:3000/api/ready
+    # {"ok":true,"db":"reachable","data":"writable"}
+    ```
+
+    Click through a few app detail pages, the dashboard, the bell. If anything looks wrong, see [If a migration fails](#if-a-migration-fails) below.
+  </Step>
+</Steps>
+
+That's the happy path. It's been the entire process for every upgrade so far.
+
+## What runs on boot
+
+`instrumentation.ts` runs serially before the app accepts requests:
+
+1. **Schema migrations.** Every `CREATE TABLE IF NOT EXISTS` runs (no-op for existing tables) plus the inline `migrations` array of `ALTER TABLE` statements. Each migration is idempotent — running it twice is safe.
+2. **Bulk-runner state checks** (3 staggered: 8s, 10s, 12s after boot). For each of `sync_running`, `wayback_import_running`, `policy_sync_running`: no-op, heal a stale lock, or auto-resume from a saved state blob with `initiator: 'resume'`.
+3. **Quarantine sweep.** Any `feature_flag_overrides` row whose key isn't in this build's `FlagKey` union gets `quarantined = 1`; rows previously quarantined whose keys are back get cleared. This is what makes downgrades-then-upgrades not lose your overrides.
+
+None of these block the UI. If migrations fail, the boot sequence renders an error screen instead of the normal app — see [If a migration fails](#if-a-migration-fails).
+
+## Reading the activity log
+
+The activity log is the canonical record of what happened during an upgrade. Useful filters when investigating:
+
+| Filter | Surfaces |
+|---|---|
+| `migration_*` | All migration step events plus the aggregate. |
+| `wayback_resumed` / `sync_resumed` / `policy_resumed` | Auto-resumed bulk runs. |
+| `*_stale_cleared` | A mutex was held with no queue and got healed. |
+| `bundle_restored` | Someone hit `POST /api/backup/restore`. Watch this column for unexpected entries. |
+
+The log is append-only by convention — `app/api/*/route.ts` doesn't expose a delete. If it grows large, drop and recreate manually with the app stopped.
+
+## If a migration fails
+
+The boot sequence renders an error screen with the failing step name, an attempt counter, and a *Try again* button. Most failures are transient — file locks, slow disks — and clear on the second attempt.
+
+<Steps>
+  <Step title="Read the step name">
+    The error message looks like *Migration step `notification_prefs_absorb` failed: …*. Steps are named so you can grep the codebase:
+
+    | Step | Meaning |
+    |---|---|
+    | `schema` | A `CREATE TABLE` or `ALTER TABLE` failed — usually disk-full or a locked DB. |
+    | `user_intent_to_focus` | Mapping legacy `user_intent` to new focus keys (one-time, v1.1 only). |
+    | `notification_prefs_absorb` | Flattening the old JSON blob into per-type rows. |
+    | `callout_rename` | Dropping override rows for renamed flags. |
+    | `quarantine_check` | Quarantining unknown flag keys. |
+  </Step>
+  <Step title="Tap Try again">
+    Migrations are idempotent. Up to 3 retries are offered.
+  </Step>
+  <Step title="If retries exhaust, take a backup of the broken DB">
+    The error screen offers a *Reset DB* escape hatch. Before you touch it:
+
+    ```bash
+    cp data/privacy.db data/privacy.db.broken-$(date +%F)
+    ```
+  </Step>
+  <Step title="Reset DB or restore from backup">
+    *Reset DB* wipes `data/privacy.db` and routes you to onboarding. You'll re-import apps from your earlier backup via **Settings → Backup → Import bundle**, which exercises the same migrations on a fresh DB.
+
+    If the bundle import also fails, the bundle is older than the running release expects — try a newer bundle, or downgrade privacytracker to a version that accepts the bundle.
+  </Step>
+  <Step title="Open an issue">
+    Migration failures are bugs we want to fix. Paste the broken DB schema (`sqlite3 privacy.db.broken-* ".schema"`) plus the activity log slice covering the failure into a [GitHub issue](https://github.com/privacykey/privacytracker/issues).
+  </Step>
+</Steps>
+
+## Rolling back
+
+privacytracker supports forward migrations only. There's no built-in *downgrade* path because:
+
+- Schema migrations are non-reversible without losing data added by the new version.
+- The bundle format is forward-compatible (`v1.0` bundle → `v1.1` runtime works) but not backward-compatible (`v1.1` bundle → `v1.0` runtime refuses with `schema_mismatch`).
+
+If you need to roll back:
+
+1. Stop the new version.
+2. Replace `data/privacy.db` with the pre-upgrade copy you took in step 1 of [The general flow](#the-general-flow). (You did take one, right?)
+3. Reinstall the older version (Homebrew: `brew install --cask privacytracker@<version>` if a pinned cask exists, otherwise download the older `.dmg`; Docker: `docker compose pull <older-tag> && up`).
+
+Any data you wrote between the upgrade and the rollback is lost.
+
+## Per-release notes
+
+The [Changelog](/changelog) mirrors `CHANGELOG.md` from the main repo. As releases land, this page should grow a per-version section here too — covering anything that *isn't* automatic and what to manually verify after upgrading.
+
+The template for a per-release entry looks like:
+
+````mdx
+### vX.Y.Z — Title
+
+**Automatic on boot:** new tables, column adds, idempotent data backfills.
+
+**Things to manually check:**
+- [setting changes that auto-migrate but might surprise you]
+- [feature-flag defaults that shifted, and how to opt out]
+- [breaking API contract changes for integrators]
+
+**Rollback:** standard pre-upgrade-backup process. No version-specific gotchas.
+````
+
+For now, all upgrades follow the standard flow above and have no version-specific manual steps.

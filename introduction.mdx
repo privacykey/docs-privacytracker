@@ -1,0 +1,74 @@
+---
+title: Introduction
+description: "privacytracker tracks how iOS apps' App Store privacy labels change over time, summarises developer privacy policies with AI, and back-fills history from the Internet Archive."
+---
+
+## What it does
+
+privacytracker is a self-hostable tool for keeping an honest, longitudinal record of what iOS apps say they collect about you.
+
+It does four things:
+
+<CardGroup cols={2}>
+  <Card title="Scrapes App Store labels" icon="apple">
+    Pulls each app's privacy labels straight from Apple's public App Store HTML — no API key, no auth — and parses both the new `shelfMapping` payload and the older `purposes → categories` shape.
+  </Card>
+  <Card title="Detects silent changes" icon="bell">
+    Snapshots every label after each scrape, diffs against the previous snapshot, and notifies you only when categories actually shift.
+  </Card>
+  <Card title="Summarises policies with AI" icon="sparkles">
+    Optional. Bring your own model (OpenAI, Anthropic, or any local OpenAI-compatible endpoint). Long policies are chunked automatically for smaller local models.
+  </Card>
+  <Card title="Back-fills history from the Wayback Machine" icon="clock-rotate-left">
+    Walks every calendar quarter from Q1 2021 forward (when Apple started server-rendering privacy nutrition labels into apps.apple.com HTML) and pulls the closest archive.org capture, synthesising a historical timeline retroactively. Two parser eras are supported: the modern `serialized-server-data` blob (Nov 2025+) and the legacy Ember/FastBoot `shoebox-media-api-cache-apps` shape (Jan 2021 – Nov 2025).
+  </Card>
+</CardGroup>
+
+<Frame caption="Dashboard overview with sample apps loaded">
+  ![Dashboard overview](/images/dashboard-overview.png)
+</Frame>
+
+<Frame caption="Privacy Map overview across tracked apps">
+  ![Privacy Map overview](/images/privacy-map.png)
+</Frame>
+
+<Frame caption="Per-app timeline with detected label changes">
+  ![App detail change timeline](/images/app-detail-timeline.png)
+</Frame>
+
+## Three distribution surfaces, one bundle
+
+The same Next.js 16 build powers all three install paths:
+
+| Surface | Best for | Auto-update |
+|---|---|---|
+| **Tauri desktop app** (signed + notarized) | macOS users who want a one-click install | Yes — Tauri updater with ed25519 signature check |
+| **Homebrew cask** | macOS users who already manage tools with `brew` | `brew upgrade --cask` |
+| **Docker / Node** | Self-hosted on Windows, Linux, NAS, or any LAN-trusted server | Manual |
+
+<Card title="Get started in 5 minutes" icon="rocket" href="/quickstart">
+  Pick an install path and have privacytracker running locally with a few apps imported.
+</Card>
+
+## What it isn't
+
+- Not an iOS app. privacytracker runs on your computer (or a self-hosted server), not your phone.
+- Not a privacy *score*. It surfaces facts and changes; how you weigh them is up to you.
+- Not affiliated with Apple. The App Store HTML scraper depends on Apple's public markup — when Apple ships a new shape, the parser falls back through three nesting layouts before giving up.
+
+## Where to next
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="play" href="/quickstart">
+    Run privacytracker locally and import your first apps.
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Detailed setup for desktop, Homebrew, Docker, and source.
+  </Card>
+  <Card title="Build from source" icon="code" href="/develop/build-from-source">
+    Run privacytracker from a checkout — for development or unsupported platforms.
+  </Card>
+  <Card title="API Reference" icon="terminal" href="/api-reference/introduction">
+    Full route map for `app/api/**`.
+  </Card>
+</CardGroup>

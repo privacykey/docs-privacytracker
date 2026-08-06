@@ -1,0 +1,279 @@
+---
+title: Hardening
+description: "Lock down a self-hosted privacytracker before exposing it beyond localhost — TLS, admin token, dev-endpoint lockout, audit-log cadence, off-host backups."
+---
+
+[Configuration](/configuration) is feature-shaped (*how do I set up AI?*); this page is threat-model-shaped (*what should I lock down before this is reachable from anything other than my own laptop?*). [Security & trust](/security) explains *what* the protections are and what threats they address; this page is the operational checklist for *applying* them on your install.
+
+Work through it in order. Each step assumes the previous ones are done.
+
+<Note>
+  privacytracker is single-user by design. There are no user accounts. Anyone who can reach the UI has full access to its data. Hardening here is about controlling *who can reach it*, not about partitioning between users on the same install.
+</Note>
+
+## Decide your network exposure
+
+Pick the most restrictive box you can live with — every step below is calibrated to one of these.
+
+<AccordionGroup>
+  <Accordion title="Tier 1: localhost only" icon="laptop">
+    Default for the desktop app. No external network exposure; only processes on your machine can reach `http://localhost:3000`. CSRF is enforced; admin token isn't strictly necessary.
+
+    **Hardening checklist:** none beyond the defaults. You're done.
+  </Accordion>
+  <Accordion title="Tier 2: trusted LAN" icon="wifi">
+    Hosted on a NAS / Pi / always-on machine reachable from other devices on your home or office network. Multiple household members can use the same instance. Not exposed to the internet.
+
+    **Hardening checklist:** TLS via reverse proxy, admin token set, dev endpoints blocked, off-host backups. The `cookbook` recipe at [Self-host on a home NAS for the household](/cookbook#self-host-on-a-home-nas-for-the-household) walks through this end-to-end.
+  </Accordion>
+  <Accordion title="Tier 3: public internet" icon="globe">
+    Reachable from anywhere. This is *not* a supported deployment model — privacytracker has no rate limiting, no user accounts, and no DDoS protection of its own. If you absolutely must, do all of Tier 2 plus: a rate-limiting reverse proxy (Cloudflare / a paid provider), IP allowlists, and an off-host TLS termination. Better: use Tailscale, WireGuard, or another mesh-VPN to keep the actual surface on a trusted network and only expose VPN authentication to the public internet.
+  </Accordion>
+</AccordionGroup>
+
+## TLS via reverse proxy
+
+privacytracker ships with no built-in TLS — it expects a reverse proxy to terminate. The proxy is also the natural place for rate limiting, IP allowlists, and structured access logs.
+
+<Tabs>
+  <Tab title="Caddy">
+    The shortest working config for a LAN deploy:
+
+    ```caddyfile
+    privacytracker.lan {
+        reverse_proxy localhost:3000 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+    ```
+
+    Caddy auto-issues Let's Encrypt certificates if `privacytracker.lan` resolves on the public internet, or self-signed certs for a LAN-only deploy. The `Host` forwarding line is non-negotiable — privacytracker enforces a same-origin CSRF check, so a proxy that strips or rewrites the Host header will cause every mutation to fail with `origin_mismatch`.
+  </Tab>
+  <Tab title="Traefik">
+    ```yaml
+    services:
+      privacytracker:
+        image: privacytracker:latest
+        labels:
+          - "traefik.enable=true"
+          - "traefik.http.routers.pt.rule=Host(`privacytracker.lan`)"
+          - "traefik.http.routers.pt.tls=true"
+          - "traefik.http.services.pt.loadbalancer.server.port=3000"
+          - "traefik.http.middlewares.pt-headers.headers.customRequestHeaders.Host=privacytracker.lan"
+          - "traefik.http.routers.pt.middlewares=pt-headers"
+    ```
+
+    The `customRequestHeaders.Host=` middleware is the equivalent of Caddy's `header_up Host`.
+  </Tab>
+  <Tab title="Nginx">
+    ```nginx
+    server {
+        listen 443 ssl http2;
+        server_name privacytracker.lan;
+
+        ssl_certificate     /etc/letsencrypt/live/privacytracker.lan/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/privacytracker.lan/privkey.pem;
+
+        location / {
+            proxy_pass         http://127.0.0.1:3000;
+            proxy_set_header   Host              $host;
+            proxy_set_header   X-Real-IP         $remote_addr;
+            proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header   X-Forwarded-Proto $scheme;
+        }
+    }
+    ```
+
+    `Host $host` is what makes the same-origin check work behind the proxy.
+  </Tab>
+</Tabs>
+
+After deploying, verify the CSRF check still passes with the new origin:
+
+```bash
+# Should fail with 403
+curl -X POST https://privacytracker.lan/api/sync/trigger
+
+# Should succeed
+curl -X POST https://privacytracker.lan/api/sync/trigger \
+  -H "Origin: https://privacytracker.lan"
+```
+
+If the second call also fails, your proxy is rewriting `Host`. See [Troubleshooting → Reverse-proxy CSRF rejection](/troubleshooting#reverse-proxy-csrf-rejection).
+
+## Set the admin token
+
+Generate a token with at least 32 bytes of entropy and inject it into the runtime environment.
+
+```bash
+openssl rand -hex 32
+# 7c8d2a3f… (paste into your .env / docker-compose / launchd plist)
+```
+
+For Docker:
+
+```bash
+echo "AUDITOR_ADMIN_TOKEN=$(openssl rand -hex 32)" >> .env
+docker compose up -d --force-recreate
+```
+
+For the desktop app, set it in the launchd plist or your shell profile so `privacytracker.app` inherits it. Confirm it's taking effect:
+
+```bash
+# Should fail with 403 admin_token_required
+curl -X POST https://privacytracker.lan/api/reset \
+  -H "Origin: https://privacytracker.lan"
+
+# Should succeed
+curl -X POST https://privacytracker.lan/api/reset \
+  -H "Origin: https://privacytracker.lan" \
+  -H "X-Auditor-Admin-Token: $AUDITOR_ADMIN_TOKEN"
+```
+
+The token is verified with `crypto.timingSafeEqual` so token comparison runs in constant time. Failed attempts append to `audit_log` with the requester IP — see [Review the audit log](#review-the-audit-log) below.
+
+<Warning>
+  Rotating the token requires a process restart. The new value is read once on boot. Don't share the token in chat / Slack / email — treat it as a secret on the level of a database password.
+</Warning>
+
+## Block dev endpoints from the proxy
+
+privacytracker ships with `/api/dev/*` routes that are only safe in development:
+
+| Route | What it does |
+|---|---|
+| `POST /api/dev/reset-changelog` | Truncates the changelog |
+| `POST /api/dev/seed-sample-data` | Inserts 10 demo apps |
+| `POST /api/dev/sync-stop` | Force-clears sync mutex |
+| `POST /api/dev/wipe-apps` | Wipes every app and snapshot |
+
+These are gated by the same CSRF and admin-token checks, but for a Tier 2/3 deploy you should also block them at the proxy so they aren't reachable at all. Caddy:
+
+```caddyfile
+privacytracker.lan {
+    @dev path /api/dev/*
+    handle @dev {
+        respond 404
+    }
+    reverse_proxy localhost:3000 {
+        header_up Host {host}
+    }
+}
+```
+
+Verify:
+
+```bash
+curl -X POST https://privacytracker.lan/api/dev/seed-sample-data
+# 404
+```
+
+## Review the audit log
+
+The `audit_log` table records destructive-route attempts and authentication failures. Review it on a regular cadence appropriate to your exposure tier.
+
+| Tier | Cadence |
+|---|---|
+| 1 (localhost) | Skip — there's nothing reaching it from outside. |
+| 2 (trusted LAN) | Monthly skim. |
+| 3 (public internet) | Weekly minimum, or pipe to a log aggregator. |
+
+From the UI: **Settings → Diagnostics → Audit log**. Direct SQL:
+
+```bash
+sqlite3 data/privacy.db "
+  SELECT datetime(at/1000, 'unixepoch') AS ts, event, ip, user_agent
+  FROM audit_log
+  WHERE at > strftime('%s', 'now', '-30 days') * 1000
+  ORDER BY at DESC
+  LIMIT 50;
+"
+```
+
+Things to react to:
+
+- **Repeated `admin_token_failed` from the same IP** — someone's brute-forcing. Rotate the token, then ban the IP at the proxy.
+- **Unfamiliar IPs hitting destructive routes** — even if the token check passed (i.e., they have the token), an unfamiliar source means the token leaked. Rotate.
+- **`reset_invoked` you didn't trigger** — your data was wiped. Restore from backup; investigate how the actor got the token.
+
+The table is append-only by convention — no API route deletes from it. If it grows large, drop and recreate manually with the app stopped.
+
+## Off-host backups
+
+A NAS's own RAID is not a backup. For Tier 2/3, schedule a daily replica of the data directory to a different physical machine.
+
+```cron
+# /etc/cron.d/privacytracker-backup
+0 3 * * * privacytracker rsync -a /opt/privacytracker/data/ backup@nas-2:/backups/privacytracker-$(date +\%F)/
+```
+
+Or use the in-app **Settings → Backup → Server snapshots** to keep rolling JSON bundles, then sync those off-host. The bundle format is forward-compatible — a v1.0 bundle restores cleanly into v1.1+. See [Backup & restore](/backup-and-restore) for the full options.
+
+Periodically verify a backup by restoring it into a throwaway instance — a backup you've never tested isn't a backup, it's a wish.
+
+## Disable inbound auto-update on Tier 3
+
+The Tauri auto-updater fetches signed patches from GitHub releases on a recurring schedule. The ed25519 signature check makes this safe in principle, but for a Tier 3 (public-internet) deploy you may want to *disable* automatic updates and manually pull-and-verify each release instead. Tradeoff: you lose silent security patches; you gain deterministic timing of every code change.
+
+```bash
+# In the desktop app's launchd plist:
+<key>EnvironmentVariables</key>
+<dict>
+  <key>AUDITOR_DISABLE_AUTO_UPDATE</key><string>1</string>
+</dict>
+```
+
+Docker installs don't have this concern — image updates are explicit (`docker compose pull && up`).
+
+## Network restrictions
+
+If your host firewall supports it, restrict outbound network from the privacytracker process to only the destinations it actually needs:
+
+| Destination | Reason |
+|---|---|
+| `apps.apple.com:443` | App Store HTML scrapes |
+| `itunes.apple.com:443` | iTunes Search API (resolving app names) |
+| `archive.org:443` + `web.archive.org:443` | Wayback imports |
+| Your AI provider's host:port | Only if AI is enabled |
+| `api.github.com:443` | Tauri updater (desktop only) |
+
+Anything else is unnecessary and a yellow flag if it appears in your egress logs. A simple iptables / nftables rule scoped to the privacytracker container's UID is enough; for serious lockdown, run the container in its own network namespace.
+
+## Pre-launch checklist
+
+Before exposing your install to anyone other than yourself:
+
+<Steps>
+  <Step title="TLS terminates at a reverse proxy">
+    Verified by browser padlock + `curl -v` showing the cert.
+  </Step>
+  <Step title="Same-origin check passes through the proxy">
+    `curl -X POST .../api/sync/trigger -H "Origin: https://your-host"` returns 200 (or 409 *already_running*, never 403).
+  </Step>
+  <Step title="Admin token is set and required">
+    `curl -X POST .../api/reset -H "Origin: ..."` (no token) returns 403 *admin_token_required*.
+  </Step>
+  <Step title="Dev endpoints return 404">
+    `curl -X POST .../api/dev/seed-sample-data -H "Origin: ..."` returns 404.
+  </Step>
+  <Step title="Off-host backup ran at least once">
+    `ls /backups/privacytracker-*/privacy.db` on the backup host shows a recent file. Restored it into a throwaway instance and counts match.
+  </Step>
+  <Step title="Audit log is empty (or only your own legitimate events)">
+    `SELECT * FROM audit_log ORDER BY at DESC LIMIT 20` shows nothing surprising.
+  </Step>
+</Steps>
+
+If any step fails, fix it before you tell anyone the URL.
+
+## What you can't lock down
+
+privacytracker is a self-hosted single-user app. There are guardrails it doesn't have, by design:
+
+- **No user accounts.** Anyone with browser access has full access. Treat the URL itself as a credential.
+- **No rate limiting on its own routes.** A bad actor inside the trust boundary can hit the API as fast as the host can answer. Rate-limit at the proxy if Tier 3.
+- **No anti-CSRF beyond same-origin.** No token-cookie pairs, no SameSite=strict-only flows. The same-origin check + the admin token are the entire CSRF surface.
+- **No append-only enforcement on `audit_log` at the SQL level.** It's append-only by convention — `app/api/*/route.ts` doesn't expose a delete — but a process with shell access to `data/privacy.db` can rewrite it. The mitigation is: don't give untrusted actors shell access.
+
+These are conscious tradeoffs for the local-first, single-user model. If you need the missing pieces, you probably want a different tool (or a privacytracker instance per user).

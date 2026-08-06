@@ -1,0 +1,148 @@
+---
+title: Versioned docs
+description: "How privacytracker versions its docs site, when to cut a new version, and the steps to add one in Mintlify."
+---
+
+privacytracker follows semver: the `<MAJOR>.<MINOR>.<PATCH>` of the *app* matches the version this docs site documents. The docs site is currently single-version (always reflects `main`), but the framework is in place to add per-version sub-sites when v1.2 ships with breaking config changes.
+
+This page is for the docs maintainer cutting a new version, not the casual contributor. Day-to-day editing flows through [`CONTRIBUTING.md`](https://github.com/privacykey/privacytracker-docs/blob/main/CONTRIBUTING.md).
+
+## Versioning strategy
+
+Three rules:
+
+1. **One docs version per *app* major.minor.** Major version `2.x` and minor `1.2` each get their own version slot. Patch versions (`1.1.1`, `1.1.2`, …) ride along on the parent minor's docs — patches don't change docs by definition.
+2. **The default version is always the latest.** Visitors land on the most-recent version unless they pick an older one from the version switcher.
+3. **Old versions are read-only.** Once `v1.1` is archived because `v1.2` shipped, we don't backport docs fixes to `v1.1` unless the fix is genuinely about the v1.1 codepath. Typos and broken links on archived versions stay there.
+
+## When to cut a new version
+
+Cut a new docs version when:
+
+- The app ships a new minor (`v1.1` → `v1.2`) and *something in the docs is now wrong for the previous minor*. If the new minor only adds features without breaking previous behaviour, cutting a new version is optional — current docs cover both.
+- A breaking config change lands. If `AUDITOR_ADMIN_TOKEN` semantics change, the previous version's docs need to stay accurate for the people on the previous release.
+- A breaking API change lands. Same reason — integrators on the old API need the old reference.
+
+Don't cut a new version for:
+
+- Patch releases.
+- Doc-only improvements.
+- Changes that are strictly additive (a new feature, a new endpoint).
+
+## Adding a version in Mintlify
+
+Mintlify supports per-version navigation via `navigation.versions`. The current `docs.json` uses the simpler `navigation.tabs` shape — adding a second version means migrating into the `versions` array.
+
+<Steps>
+  <Step title="Create the archive folder">
+    Copy every page that should be frozen for the previous version into a top-level folder named after that version:
+
+    ```bash
+    mkdir -p v1.1
+    cp -r introduction.mdx alternatives.mdx quickstart.mdx installation.mdx \
+          configuration.mdx cookbook.mdx backup-and-restore.mdx security.mdx \
+          hardening.mdx performance-and-sizing.mdx upgrading.mdx troubleshooting.mdx \
+          faq.mdx glossary.mdx changelog.mdx develop/ api-reference/ v1.1/
+    ```
+
+    Inside `v1.1/`, leave the content alone — it's a snapshot.
+  </Step>
+  <Step title="Migrate docs.json into the versions shape">
+    ```diff
+     "navigation": {
+    -  "tabs": [ ... ]
+    +  "versions": [
+    +    {
+    +      "version": "v1.2",
+    +      "default": true,
+    +      "tabs": [ ... existing tabs unchanged ... ]
+    +    },
+    +    {
+    +      "version": "v1.1",
+    +      "tabs": [
+    +        {
+    +          "tab": "Self-Host",
+    +          "groups": [
+    +            {
+    +              "group": "Get Started",
+    +              "pages": [
+    +                "v1.1/introduction",
+    +                "v1.1/quickstart",
+    +                ...
+    +              ]
+    +            }
+    +          ]
+    +        }
+    +      ]
+    +    }
+    +  ]
+     }
+    ```
+
+    Mintlify renders a version dropdown in the topbar once `navigation.versions` has more than one entry.
+  </Step>
+  <Step title="Add a Note callout to archived pages">
+    At the top of each `v1.1/*.mdx` page, add:
+
+    ```mdx
+    <Note>
+      This page documents privacytracker **v1.1**. For the latest version, [switch to current](/) using the version dropdown.
+    </Note>
+    ```
+
+    Use a small script rather than editing each file by hand:
+
+    ```bash
+    for f in v1.1/**/*.mdx; do
+      # awk insert after the closing frontmatter ---
+      awk 'BEGIN{ins=0} /^---$/{c++; print; if(c==2 && !ins){print ""; print "<Note>"; print "  This page documents privacytracker **v1.1**. For the latest, [switch to current](/)."; print "</Note>"; ins=1} next} {print}' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    done
+    ```
+  </Step>
+  <Step title="Run npm run check">
+    The smoke check follows links across all versions. If any cross-version reference is broken, fix it now — old versions linking to new content is fine, new versions linking back into archived versions is usually a bug.
+  </Step>
+  <Step title="Update CONTRIBUTING.md">
+    Add a *Don't edit `v1.1/`* line to the contributing guide so future contributors don't try to update archived pages.
+  </Step>
+</Steps>
+
+## Removing an old version
+
+We don't remove old versions — visitors with bookmarks to `/v1.1/configuration` should still land on real content, even if it's stale. Disk cost is negligible (a few MB per version).
+
+The exception is if a version is *misleading* in a way that hurts users — e.g., it documents a security pattern that's since been found insecure. In that case:
+
+1. Add a `<Warning>` to every page in the affected version pointing at the current version.
+2. Update the version's `changelog.mdx` to call out the issue.
+3. Don't delete; deletion breaks search-engine results that lead to the stale page.
+
+## URL shape
+
+Default version: `/configuration`, `/develop/architecture`, etc.
+
+Archived version: `/v1.1/configuration`, `/v1.1/develop/architecture`.
+
+The version dropdown in the topbar handles switching automatically — readers don't have to remember the URL prefix.
+
+## Search across versions
+
+Mintlify's built-in search indexes only the *active* version by default. To index all versions (so a search for *AUDITOR_ADMIN_TOKEN* finds matches in `v1.1` and `v1.2`), add to `docs.json`:
+
+```json
+"search": {
+  "prompt": "Search the privacytracker docs",
+  "scope": "all-versions"
+}
+```
+
+Trade-off: a single search result list mixing versions can confuse visitors who don't realise they're on an old page. Default-version-only search is usually the right call.
+
+## Sync-changelog implications
+
+The [changelog automation](https://github.com/privacykey/privacytracker-docs/blob/main/.github/workflows/sync-changelog.yml) writes to `changelog.mdx` (the default-version path). After cutting `v1.1` as an archived version:
+
+- Archived `v1.1/changelog.mdx` should be frozen in time — *don't* let the sync workflow overwrite it. The workflow already only writes to the top-level path, so this is automatic.
+- The current `changelog.mdx` continues to receive new release entries.
+
+If a maintainer ever needs to back-port a changelog correction to an archived version, do it manually — the automation is intentionally one-way.

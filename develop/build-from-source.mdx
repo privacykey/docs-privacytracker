@@ -1,0 +1,147 @@
+---
+title: Build from source
+description: "Clone the repo, install Node 24, and run privacytracker from a checkout."
+---
+
+This page is for running privacytracker out of a source checkout — for development work, custom builds, or platforms where prebuilt binaries aren't published yet (Windows, Linux desktop).
+
+If you just want to use privacytracker, the [self-host quickstart](/quickstart) is faster.
+
+## Prerequisites
+
+<Steps>
+  <Step title="Install Node 24 LTS">
+    privacytracker pins to Node 24 in `engines.node` (`>=24.0.0 <26.0.0`). Earlier versions will fail `npm install` on the better-sqlite3 native build.
+
+    ```bash
+    # macOS, with Homebrew
+    brew install node@24
+
+    # cross-platform, with a version manager
+    nvm install 24 && nvm use 24
+
+    # verify
+    node --version  # → v24.x.x
+    ```
+  </Step>
+  <Step title="Install build essentials (Linux only)">
+    better-sqlite3 builds a native module on first install. On Debian/Ubuntu:
+
+    ```bash
+    sudo apt-get install -y build-essential python3
+    ```
+
+    macOS gets these automatically via the Xcode Command Line Tools (`xcode-select --install`).
+  </Step>
+</Steps>
+
+## Clone and run
+
+```bash
+git clone https://github.com/privacykey/privacytracker.git
+cd privacytracker
+npm install
+npm run dev
+# → http://localhost:3000
+```
+
+`npm run dev` boots Next.js in dev mode with hot reload. The SQLite database is created on first request at `./data/privacy.db`.
+
+## Production build
+
+```bash
+npm run build
+npm start
+```
+
+This produces the same artefact that ships in the desktop app and Docker image. The output is a single Next.js standalone bundle plus the `data/` directory.
+
+## Common tasks
+
+<CodeGroup>
+```bash lint
+npm run lint           # ESLint flat config for Next 16
+npm run typecheck      # tsc --noEmit
+```
+
+```bash test
+npm test               # focused node:test suite (uses tsx + tests/setup-env.ts)
+npm run test:coverage  # adds V8 coverage in coverage/v8/
+```
+
+```bash i18n
+npm run lint:i18n      # checks every locales/*.json against en.json for key drift
+```
+
+```bash standalone
+npm run build:standalone   # build the Tauri sidecar bundle (BUILD_STANDALONE=1)
+```
+</CodeGroup>
+
+## Running the iPhone import helper
+
+The companion Python tool in `tools/ios-app-import/` is stdlib-only and unrelated to the Node app — it produces a text file the web onboarding accepts.
+
+```bash
+python3 tools/ios-app-import/export_ios_apps.py --mode backup
+python3 tools/ios-app-import/export_ios_apps.py --mode device
+```
+
+Run its tests with:
+
+```bash
+npm run test:ios-import-helper
+```
+
+## Working with the SQLite database
+
+Some patterns to know before you touch `lib/db.ts` or any helper that writes to the DB:
+
+- `lib/db.ts` exports a **singleton** `better-sqlite3` instance. Don't open a second one.
+- Pragmas set on open: `journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON`.
+- All DB calls are **synchronous**. Multi-step writes use `db.transaction(() => { … })()` (see `saveToDb` in `lib/scraper.ts` for the canonical pattern).
+- Schema changes need to be applied in **two places** in `lib/db.ts`: the `CREATE TABLE IF NOT EXISTS` block (for fresh installs) and the inline `migrations` array of `ALTER TABLE` statements (for existing installs). Forgetting one breaks upgrade paths.
+- Capture the previous snapshot *before* calling `saveToDb` — it wipes and re-inserts `privacy_types` for that app, and the diff loses every row if you capture after.
+
+The full reasoning is in [Architecture](/develop/architecture).
+
+## Adding a new feature flag
+
+Three edits, in this order:
+
+<Steps>
+  <Step title="Add the key to the union">
+    `lib/feature-flag-rules.ts` → add it to the `FlagKey` union. Typos fail at `tsc`.
+  </Step>
+  <Step title="Add a HARD_DEFAULTS entry">
+    Every key needs a hard default — that's what the kill-switch falls back to.
+  </Step>
+  <Step title="Add rules only if behaviour differs">
+    Populate `AUDIENCE_RULES`, `GOAL_RULES`, or `ACCESSIBILITY_RULES` only when the value should differ from the hard default. Most flags don't care about most inputs — keep the rule tables sparse.
+  </Step>
+</Steps>
+
+Full design rationale: [Feature flags](/develop/feature-flags).
+
+## Adding a new locale
+
+Editing copy goes through Crowdin (no JSON-mangling required). See [Translations](/develop/translations) for the full workflow. The short version:
+
+1. Add the language in Crowdin → Project Settings → Target Languages.
+2. Add the row to `crowdin.yml`'s `languages_mapping.two_letters_code` if Crowdin's ID doesn't match your bundle filename.
+3. Add the locale to next-intl's supported list.
+4. Drop a placeholder `locales/<new>.json` containing `{}` so the first build succeeds.
+
+## Where the code lives
+
+| Question | File |
+|---|---|
+| App Store HTML scraping + parsing | `lib/scraper.ts` |
+| Snapshot and diff logic | `lib/changelog.ts` |
+| Privacy-policy summarisation | `lib/privacy-policy.ts` |
+| Database singleton + migrations | `lib/db.ts` |
+| Three crash-safe bulk runners | `lib/{sync,wayback,policy}-bulk-runner.ts` |
+| Feature-flag resolver | `lib/feature-flags.ts` |
+| Background ticker + boot resume | `instrumentation.ts` |
+
+The dense engineering reference (every gotcha, every Apple-HTML quirk, the apostrophe variants in the privacy-policy aria-label, the `Array.isArray(raw) ? raw : raw.data` unwrap) lives in `AGENTS.md` (for Codex) and `CLAUDE.md` (for Claude Code) at the repo root. Coding agents read those directly. Humans should too.

@@ -1,0 +1,36 @@
+---
+title: Scripts
+description: "Utility scripts that contributors may run from a privacytracker source checkout."
+---
+
+Most day-to-day work uses the npm scripts in `package.json`, but a few focused utilities live in the repo's `scripts/` directory. Run the commands below from the repository root unless noted otherwise.
+
+## Redaction check
+
+`scripts/redaction-check.mjs` is a small verification utility for backup exports. It creates a temporary SQLite data directory, writes a sentinel value into the `ai_api_key` setting, exports a backup bundle, and fails if that sentinel leaks into the serialized backup.
+
+Run it with the same TypeScript loader used by the test suite:
+
+```bash
+node --import tsx scripts/redaction-check.mjs
+```
+
+A passing run confirms:
+
+- sensitive settings such as `ai_api_key` are blanked in exported backup data;
+- non-sensitive settings remain intact;
+- `redactSensitiveSettingsRows` does not mutate its input rows.
+
+The script writes only to a temporary directory created under the system temp folder. It does not touch your local `data/privacy.db`.
+
+## Related scripts
+
+| Script | Purpose |
+|---|---|
+| `scripts/check-i18n-parity.mjs` | Checks every locale bundle against `locales/en.json`. Usually run through `npm run lint:i18n`. |
+| `scripts/stage-standalone.mjs` | Stages the Next.js standalone output for the Tauri sidecar bundle. Usually run through `npm run build:standalone`. |
+| `scripts/ensure-standalone-stub.mjs` | Creates a safe placeholder bundle before `tauri dev` so the desktop shell has a resource to mount while the real bundle is being built. |
+| `scripts/audit-github-settings.mjs` | Audits selected GitHub repository settings. Usually run through `npm run audit:repo-settings`. |
+| `scripts/verify-docker-attestations.mjs` | Verifies Docker release attestations for supply-chain checks. |
+
+If a script graduates into a routine contributor task, prefer adding a named `package.json` command so CI and humans run the same entry point.

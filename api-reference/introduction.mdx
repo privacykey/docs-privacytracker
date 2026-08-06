@@ -1,0 +1,157 @@
+---
+title: API overview
+description: "How to call the privacytracker HTTP API — authentication, conventions, and where to find the interactive playground."
+---
+
+The privacytracker HTTP API lives under `app/api/**` in the Next.js bundle. Every endpoint is a thin wrapper over a helper in `lib/`. Public request and response shapes are stable.
+
+The interactive endpoint pages with **Try it** support are auto-generated from `openapi.yaml` — see the **API Reference** sidebar for per-endpoint detail. This page covers the cross-cutting concerns: authentication, CSRF, rate-limiting, and how to recognise the response shapes.
+
+## Base URL
+
+```
+http://localhost:3000
+```
+
+Self-hosted users should substitute their own base URL (and host header — see the CSRF section). The OpenAPI spec defaults to localhost; change the `Server` dropdown in the playground to match your deployment.
+
+## Authentication
+
+There are two layers, applied to *destructive* routes only. Read-only endpoints have neither.
+
+<AccordionGroup>
+  <Accordion title="Same-origin CSRF check (always on)" icon="shield">
+    Every mutating verb (`POST`, `PUT`, `PATCH`, `DELETE`) checks that the `Origin` header matches the request host. Browser requests from your installed UI satisfy this automatically; cross-origin or curl-from-a-different-host calls won't.
+
+    Failed CSRF returns:
+
+    ```json
+    { "error": "origin_mismatch" }
+    ```
+
+    From `curl`, set the header explicitly:
+
+    ```bash
+    curl -X POST http://localhost:3000/api/reset \
+      -H "Origin: http://localhost:3000"
+    ```
+
+    If you're behind a reverse proxy, the proxy must forward the original `Host` header. See [Troubleshooting → Reverse-proxy CSRF rejection](/troubleshooting#reverse-proxy-csrf-rejection).
+  </Accordion>
+  <Accordion title="Admin token (optional, opt-in)" icon="key">
+    When `AUDITOR_ADMIN_TOKEN` is set in the environment, *destructive* routes (`POST /api/reset`, `DELETE /api/apps`, `POST /api/settings`, `DELETE /api/wayback/import-all`, etc.) require an `X-Auditor-Admin-Token` header on top of the CSRF check. Verification uses `crypto.timingSafeEqual`.
+
+    Failed attempts are recorded in the `audit_log` table with requester IP + user agent.
+
+    ```bash
+    curl -X POST http://localhost:3000/api/reset \
+      -H "Origin: http://localhost:3000" \
+      -H "X-Auditor-Admin-Token: $AUDITOR_ADMIN_TOKEN"
+    ```
+
+    The token is purely opt-in — there's no built-in user/account system in privacytracker. The intent is to gate destructive routes when the app is exposed beyond a single-user trusted boundary (e.g., self-hosted on a LAN).
+  </Accordion>
+</AccordionGroup>
+
+## Conventions
+
+A handful of patterns hold across every endpoint:
+
+- **`apps.id` is Apple's numeric track ID**, extracted from `/id<digits>/` in the App Store URL — not a UUID. Snapshots, privacy rows, and notifications all key off it.
+- **Timestamps are Unix milliseconds**, not seconds and not ISO-8601. JavaScript `Date.now()`-shaped.
+- **Errors are `{ "error": "<machine-readable-code>", "details"?: "<human description>" }`** with the appropriate 4xx / 5xx status. Codes are stable; details are not.
+- **Streamed responses** (`POST /api/wayback/import-all?stream=1`) emit NDJSON with a `kind` field per line — `batch-start`, `app-start`, `target`, `app-done`, `summary`.
+- **Mutation routes returning 409 mean a mutex is held** by another in-flight run. Wait or check `GET /api/tasks/active` to see what's running.
+
+## Rate limiting
+
+privacytracker doesn't impose its own rate limits — it's a single-user app. The rate limit you'll actually hit is **Apple's 429 on the iTunes Search API and `apps.apple.com`**. The bulk runners handle this gracefully:
+
+- The runner bails out of its loop on the first 429.
+- A `partial: rateLimited` activity row is written.
+- State and mutex are cleared cleanly, so the next 30-minute scheduler tick can retry fresh.
+
+If your integration triggers scrapes directly via `POST /api/scrape`, expect 429 occasionally and back off for ~30 minutes when you see one.
+
+## Backup bundle format
+
+`GET /api/backup/export` and `POST /api/backup/restore` use a versioned JSON envelope. The shape is documented in the spec; the canonical implementation lives in `lib/audit-bundle.ts`. Restore is forward-compatible — a v1.0 bundle restores cleanly into v1.1+, but not the reverse (newer bundles can carry fields older versions don't know how to migrate down).
+
+Private annotations (`visibility = 'private'`) are unconditionally excluded from audit-bundle exports at the SQL level. There is no force-include path.
+
+## Pagination
+
+`GET /api/apps` supports opt-in pagination for large fleets. Without
+parameters it returns the complete fleet as a **bare JSON array** — stable
+for existing consumers, but the response grows linearly with the fleet
+(~0.7 KB per app). Passing `limit` (1–500, plus an optional `offset`)
+switches the response to an envelope:
+
+```json
+{ "apps": [...], "total": 5000, "limit": 500, "offset": 0 }
+```
+
+Pages are ordered by app name (then id), so offsets are deterministic
+across requests. Add `meta=grid` to bundle the per-app maps the apps grid
+renders (profile badges, user verdicts, pending-change breakdown, device
+links), scoped to the returned page. For installs tracking more than
+~1,000 apps, prefer the paginated form — it's what the app's own grid uses.
+
+## Calling the API from another app
+
+Three patterns are common:
+
+<CodeGroup>
+```bash curl
+curl -s "http://localhost:3000/api/apps?limit=500" | jq '.apps[] | {id, name, changeCount}'
+
+curl -X POST http://localhost:3000/api/scrape \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://localhost:3000" \
+  --data '{"urls":["https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580"]}'
+```
+
+```javascript fetch
+const res = await fetch("http://localhost:3000/api/apps?limit=500");
+const { apps, total } = await res.json();
+
+await fetch("http://localhost:3000/api/scrape", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Origin": "http://localhost:3000",
+  },
+  body: JSON.stringify({
+    urls: ["https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580"],
+  }),
+});
+```
+
+```python httpx
+import httpx
+
+async with httpx.AsyncClient(base_url="http://localhost:3000") as c:
+    apps = (await c.get("/api/apps", params={"limit": 500})).json()["apps"]
+
+    await c.post(
+        "/api/scrape",
+        headers={"Origin": "http://localhost:3000"},
+        json={"urls": ["https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580"]},
+    )
+```
+</CodeGroup>
+
+## Full route map
+
+The OpenAPI spec covers the public-contract surface — the routes integrators most commonly hit. The complete route map (including dev-only and internal routes) is in the [Architecture overview](/develop/architecture#api-surface) and the underlying `app/api/*/route.ts` files in the source tree:
+
+| Group | Where in the source |
+|---|---|
+| Apps, scrape, search, changelog | `app/api/{apps,search,scrape,changelog}/route.ts` |
+| Backup, snapshots, audit bundle | `app/api/backup/**/route.ts`, `app/api/{import,export}/audit-bundle/route.ts` |
+| AI, policy versions, debug log | `app/api/{ai,policy}/**/route.ts` |
+| Focus, flags, profile, prefs | `app/api/{focus,feature-flags,privacy-profile,accessibility-profile,preferences}/**/route.ts` |
+| Notes, verdicts, notifications | `app/api/{annotations,verdicts,notifications}/**/route.ts` |
+| Bulk task status | `app/api/tasks/active/route.ts`, `app/api/{sync,wayback,policy}/**/route.ts` |
+| Stats, charts | `app/api/stats/**/route.ts` |
+| Health, deployment, admin | `app/api/{health,ready,deployment,admin,reset,dev}/**/route.ts` |

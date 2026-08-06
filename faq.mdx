@@ -1,0 +1,99 @@
+---
+title: FAQ
+description: "Common questions about what privacytracker is, what it isn't, and how it handles your data."
+---
+
+<AccordionGroup>
+  <Accordion title="Is this affiliated with Apple?" icon="apple">
+    No. privacytracker is an independent open-source project. It reads each app's privacy labels straight from Apple's public App Store HTML — no API key, no auth, no partnership. When Apple changes their HTML shape, we update the parser; if Apple were ever to ask us to stop, we would.
+  </Accordion>
+
+  <Accordion title="Does this work for Android apps?" icon="android">
+    No. The scraper targets Apple's App Store HTML — both the modern `<script id="serialized-server-data">` envelope (Nov 2025+) and the older Ember/FastBoot `shoebox-media-api-cache-apps` shape (Jan 2021 – Nov 2025) for archive.org captures — which is iOS-specific. Google Play has a different shape and a different label scheme (Google's "Data safety" section vs. Apple's "App Privacy"), so it would need a separate parser and data model. The codebase is contribution-friendly and the data layer is structured to make adding a parallel parser feasible if someone wants to take it on.
+  </Accordion>
+
+  <Accordion title="Can I try it before adding my own apps?" icon="flask">
+    Yes. On first run, pick **Try with sample data** instead of adding apps — privacytracker loads 10 demo apps so you can explore the dashboard, Privacy Map, per-app timelines, and the bell before committing anything real. The sample set is session-only and disappears once you restart or start adding your own apps, so it never mixes into your data.
+  </Accordion>
+
+  <Accordion title="What data leaves my machine?" icon="shield">
+    Three things, all opt-in or transparent:
+
+    1. **App Store HTML** — fetched from `apps.apple.com` to read public privacy labels. Same network call your browser makes when you visit an app's page.
+    2. **Privacy-policy text** — fetched from the developer's own domain when you've enabled AI summaries. The fetcher follows redirects and respects standard `Cache-Control` headers.
+    3. **AI provider calls** — only if you've configured one. The policy text (chunked if necessary) is sent to OpenAI, Anthropic, or your local OpenAI-compatible endpoint. Nothing else — no app names, no usage, no telemetry.
+
+    privacytracker has no analytics or telemetry of its own. The SQLite database, all settings, all your annotations — everything stays on your machine.
+  </Accordion>
+
+  <Accordion title="How much do AI summaries cost?" icon="dollar-sign">
+    It depends on the provider and how many policies you summarise:
+
+    - **OpenAI / Anthropic (hosted)** — typically a fraction of a cent per summary. A privacy policy of ~20 KB summarised through `gpt-4o-mini` or `claude-haiku-*` runs around USD $0.001-0.005 per app. Re-summarisation only happens when the policy text actually changes (we hash and skip otherwise), so the long-tail cost stays low.
+    - **Local model (Ollama, LM Studio, llama.cpp)** — free at runtime; you pay in disk space and a one-time model download. Quality varies; Llama 3.1 8B and Qwen 2.5 7B both produce usable summaries on the lens prompts.
+
+    Set a hard cap in **Settings → AI → Daily token budget** if you want belt-and-braces cost protection.
+  </Accordion>
+
+  <Accordion title="Can I run this for my whole family on one server?" icon="users">
+    Yes — that's the `audience: guardian` mode. One Docker container or one self-hosted instance can track apps across multiple people's devices; the import flow accepts batched `.txt` / `.csv` files from the [iPhone import helper](/installation#iphone-import-helper) so you can ingest a family member's app list in one pass.
+
+    privacytracker has no built-in user accounts or per-user partitioning — it's a single-user app at the data layer. If you need separate views for different family members, run separate instances (different ports, different `data/` directories) or rely on the `loved_one` audience export-bundle workflow to share a curated subset.
+  </Accordion>
+
+  <Accordion title="What happens if Apple breaks the scraper?" icon="triangle-exclamation">
+    The parser has a three-layer fallback chain (`shelfMapping.privacyTypes.items` → `privacyHeader.seeAllAction.pageData.shelves` → generic `pageData.shelves`) so most shape changes absorb without a release. When Apple ships a fully breaking change — twice in the project's history so far — the fix is usually 5-10 lines in `lib/scraper.ts` once we have a known-broken example.
+
+    If you hit a parser failure, the support bundle in **Settings → Diagnostics** captures everything we'd need to fix it; paste it into a GitHub issue.
+  </Accordion>
+
+  <Accordion title="Does this need to be online all the time?" icon="wifi">
+    Only when scraping. Once data is in your local SQLite DB, every dashboard, chart, timeline, and search works offline. The 30-minute background sync ticker noops if the network is unreachable; you can also disable scheduled sync entirely in **Settings → Sync** and re-scrape manually.
+
+    Wayback imports and AI-policy fetches obviously need internet at the time they run.
+  </Accordion>
+
+  <Accordion title="Can I export my data?" icon="file-export">
+    Yes:
+
+    - **Backup bundle** — `GET /api/backup/export` produces a versioned JSON file with every app, label, snapshot, annotation, and notification. Restorable via `POST /api/backup/restore` with a typed-confirmation preview. See [Backup & restore](/backup-and-restore).
+    - **CSV / JSON dump** — `GET /api/export?format=csv|json` for a flat data dump suitable for piping into a spreadsheet or another tool.
+    - **Audit bundle** — for the `audience: loved_one` workflow, a curated subset (apps, labels, AI summaries, exportable annotations) suitable for sharing with another household member or a regulator.
+
+    Private annotations are unconditionally excluded from audit-bundle exports at the SQL level — there is no force-include path.
+  </Accordion>
+
+  <Accordion title="Is this GDPR / CCPA / DPDP-friendly?" icon="scale-balanced">
+    privacytracker doesn't collect or transmit personal data, so the privacy-regulation footprint of *running* it is minimal. What it stores about you locally is your own data — annotations you wrote, apps you tracked, AI summaries of public policies.
+
+    If you're using the audit-bundle export to *share* data with someone else (a regulator, a household member), that bundle contains your annotations and verdicts, so treat it like any other personal data file — keep it on encrypted media, share via secure transfer.
+
+    privacytracker is not a substitute for legal advice and we don't claim any compliance certification.
+  </Accordion>
+
+  <Accordion title="Why is the database SQLite and not Postgres?" icon="database">
+    Three reasons:
+
+    1. **Single-user app** — there's no multi-write contention to manage. WAL mode + a 5-second `busy_timeout` cover the rare cases where a manual scrape and a scheduled sync overlap.
+    2. **Bind-mountable as one file** — `./data/privacy.db` survives container rebuilds, copies trivially for backup, and can be inspected directly with the `sqlite3` CLI. No backup server, no replication, no DBA needed.
+    3. **No schema migration tooling** — better-sqlite3's synchronous API plus an inline `migrations` array of `ALTER TABLE` statements is a complete schema-versioning story for the project's complexity. Postgres would buy us nothing we'd actually use.
+
+    The trade-off: privacytracker doesn't scale horizontally. That's fine — it isn't a multi-tenant SaaS, it's a tool you run for yourself.
+  </Accordion>
+
+  <Accordion title="What languages is the interface available in?" icon="language">
+    English today. The interface is built on `next-intl` with the localisation framework already wired up, but only the English bundle ships right now; the active language is selected at render time from your app settings, so other locales light up as they're translated. Adding a language is a contributor task — see [Translations](/develop/translations).
+  </Accordion>
+
+  <Accordion title="Can I contribute a new privacy-label parser, locale, or chart?" icon="git-pull-request">
+    Yes. See [Contributing](/develop/contributing) for the workflow. Privacy-label parser fixes are typically the most welcome and the most contained — usually a 5-10 line update in `lib/scraper.ts` plus a regression test.
+  </Accordion>
+
+  <Accordion title="Is the desktop app open source?" icon="code">
+    Yes. The Tauri shell (`src-tauri/`), the Next.js bundle, the iPhone import helper (`tools/ios-app-import/`), and everything else in the repo is Apache-2.0 licensed. The signed binaries we publish on GitHub releases are built deterministically from the same source — you can build your own from `develop/build-from-source` if you want to verify.
+  </Accordion>
+</AccordionGroup>
+
+## Didn't see your question?
+
+Open an issue on [GitHub](https://github.com/privacykey/privacytracker/issues) — if it's a question we hear more than once, it lands here.

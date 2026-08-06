@@ -1,0 +1,76 @@
+---
+title: Develop
+description: "Build privacytracker from source, understand the architecture, and contribute changes back."
+---
+
+This section is for people who want to **build, modify, or contribute to** privacytracker — not for people who just want to run it.
+
+If you're looking to install and use privacytracker, the [Self-Host](/quickstart) tab is what you want.
+
+## Who this section is for
+
+<CardGroup cols={2}>
+  <Card title="You want to build from source" icon="code">
+    Maybe to run on Windows or Linux desktop (where prebuilt binaries aren't published yet), or to try a change before opening a PR.
+  </Card>
+  <Card title="You want to contribute" icon="git-pull-request">
+    Bug fixes, new privacy-label parsers, additional locales, or new dashboard widgets.
+  </Card>
+  <Card title="You're integrating with the API" icon="plug">
+    Building tools on top of privacytracker's `app/api/**` routes — e.g. piping snapshots into your own data pipeline.
+  </Card>
+  <Card title="You want to understand internals" icon="diagram-project">
+    The data flow, the three crash-safe runners, the focus-driven feature-flag system, or the translations workflow.
+  </Card>
+</CardGroup>
+
+## Where to start
+
+<Steps>
+  <Step title="Build from source">
+    Clone the repo, install Node 24, and run `npm run dev`. Full walkthrough in [Build from source](/develop/build-from-source).
+  </Step>
+  <Step title="Read the architecture overview">
+    [Architecture](/develop/architecture) covers the codebase shape, the seven-step scrape→snapshot→diff→notify loop, the SQLite model, and the three crash-safe bulk runners.
+  </Step>
+  <Step title="Understand the feature-flag system">
+    Every user-facing surface is gated by a focus model: audience × goals × accessibility. [Feature flags](/develop/feature-flags) explains the resolver, the storage model, and how to add a new flag.
+  </Step>
+  <Step title="Contribute translations">
+    `locales/en.json` is the source of truth. Other locales round-trip through Crowdin. See [Translations](/develop/translations) for the workflow.
+  </Step>
+</Steps>
+
+## Tooling
+
+Day-to-day commands you'll actually use:
+
+```bash
+npm install            # requires Node 24 LTS
+npm run dev            # http://localhost:3000
+npm run lint           # ESLint flat config for Next 16
+npm run typecheck      # TypeScript without emitting files
+npm test               # focused node:test suite
+npm run lint:i18n      # check locales/*.json key parity against en.json
+npm run build          # production build
+```
+
+## Repo layout at a glance
+
+```
+privacytracker/
+├── app/                Next.js App Router pages + API routes
+├── lib/                server-side logic — most of the product lives here
+├── tools/              out-of-band scripts (icon generation, ios-app-import companion)
+├── data/privacy.db     SQLite database (gitignored)
+├── locales/            i18n bundles (en.json is the source of truth)
+├── .github/wiki/       canonical long-form documentation (kept for parity with this site)
+├── AGENTS.md           coding-agent instructions for Codex
+└── CLAUDE.md           coding-agent instructions for Claude Code
+```
+
+Anything not here — release pipeline, code signing, the GitHub Actions that publish notarized builds — lives in the wiki and is intentionally out of scope for this docs site. The point of the public docs is to help users self-host and contributors get productive; release engineering is internal.
+
+## Reporting issues
+
+[github.com/privacykey/privacytracker/issues](https://github.com/privacykey/privacytracker/issues). Bug reports use the `bug_report.yml` template; security reports follow [SECURITY.md](https://github.com/privacykey/privacytracker/blob/main/SECURITY.md).

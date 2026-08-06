@@ -1,0 +1,182 @@
+---
+title: Backup & restore
+description: "How to back up your privacytracker data, restore it, and migrate between install paths."
+---
+
+privacytracker stores everything in a single SQLite file, which makes backup boring in a good way: copy the file, you have a backup. There are also higher-level tools for versioned exports, scheduled snapshots, and migrating between install paths.
+
+## Where the database lives
+
+| Surface | Path |
+|---|---|
+| Desktop app (macOS) | `~/Library/Application Support/privacytracker/privacy.db` |
+| Docker | `./data/privacy.db` on the host (bind-mounted) |
+| From source | `./data/privacy.db` in the repo working directory |
+
+It's a single SQLite file plus optional `-wal` and `-shm` siblings while the app is running. WAL mode means you can copy `privacy.db` even while the app is running — the worst case is missing a few seconds of writes-in-flight, which is fine for backup. For a guaranteed-consistent copy, stop the app first.
+
+## Quick file copy (simplest)
+
+```bash
+# macOS desktop app — quit the app first for a clean copy
+cp ~/Library/Application\ Support/privacytracker/privacy.db ~/backups/privacy-$(date +%F).db
+
+# Docker
+cp data/privacy.db ~/backups/privacy-$(date +%F).db
+
+# From source
+cp data/privacy.db ../backups/privacy-$(date +%F).db
+```
+
+Restore is the inverse — replace the file with the app stopped, then start it back up. Schema migrations run on boot, so an older backup restored into a newer release upgrades automatically.
+
+## Backup bundle (versioned, app-aware)
+
+`GET /api/backup/export` produces a single JSON file with every app, label, snapshot, annotation, notification, focus state, and feature-flag override. It's versioned, so a bundle exported from v1.1 restores cleanly into v1.2 and later.
+
+From the UI: **Settings → Backup → Export bundle**.
+
+<Frame caption="Backup and restore settings">
+  ![Backup and restore settings](/images/settings-backup.png)
+</Frame>
+
+From the API:
+
+```bash
+curl -o backup-$(date +%F).json http://localhost:3000/api/backup/export
+```
+
+The bundle is plain JSON — you can `gzip` it for storage and restore from the gzipped form, the importer transparently decompresses.
+
+### Restore with preview
+
+`POST /api/backup/restore` requires a typed-confirmation step (you type `RESTORE` to confirm) and surfaces a preview of what will be replaced before any writes happen.
+
+From the UI: **Settings → Backup → Import bundle** → choose the file → confirm in the preview dialog.
+
+From the API:
+
+```bash
+# 1. Preview (read-only)
+curl -X POST http://localhost:3000/api/backup/preview \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://localhost:3000" \
+  --data-binary @backup-2026-05-09.json
+
+# 2. Restore (after reviewing the preview)
+curl -X POST "http://localhost:3000/api/backup/restore?confirm=RESTORE" \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://localhost:3000" \
+  --data-binary @backup-2026-05-09.json
+```
+
+Restore wipes the existing database and reloads from the bundle. Take a file copy of `data/privacy.db` first as a safety net.
+
+## Server-local rolling snapshots
+
+privacytracker can keep its own rolling snapshots in the data directory under `data/snapshots/` — useful if you don't want to wire up an external backup tool but still want a few historical copies on hand.
+
+Configure in **Settings → Backup → Server snapshots**:
+
+| Setting | Default | Notes |
+|---|---|---|
+| **Schedule** | weekly | `daily` / `weekly` / `monthly` / `off` |
+| **Retention** | 4 | how many recent snapshots to keep; older ones are auto-pruned |
+| **Take one now** | — | one-click snapshot for ad-hoc backups |
+
+Snapshots are stored as the same versioned JSON bundle format. List them via `GET /api/backup/snapshots`; download a specific one via `GET /api/backup/snapshots/<filename>`.
+
+## Migrating between install paths
+
+The same versioned bundle works as the migration vehicle.
+
+### Docker → desktop app
+
+<Steps>
+  <Step title="Export from Docker">
+    ```bash
+    curl -o privacytracker-export.json http://localhost:3000/api/backup/export
+    ```
+  </Step>
+  <Step title="Stop the Docker stack">
+    ```bash
+    docker compose down
+    ```
+  </Step>
+  <Step title="Install the desktop app">
+    Download the latest `.dmg` from [Releases](https://github.com/privacykey/privacytracker/releases/latest), drag to `/Applications`, launch.
+  </Step>
+  <Step title="Import the bundle">
+    Open the desktop app → **Settings → Backup → Import bundle** → choose `privacytracker-export.json` → type `RESTORE` to confirm.
+  </Step>
+</Steps>
+
+### Desktop app → Docker
+
+Same flow in reverse. Export from the desktop app's **Settings → Backup**, drop the JSON next to `docker-compose.yml`, start the stack, import via the UI.
+
+### Source checkout → Docker (or vice versa)
+
+Both already use `./data/privacy.db` in the project root, so you can either:
+
+- Copy the file directly between checkouts, or
+- Use the bundle export/import flow (recommended if you want migration to also handle schema upgrades).
+
+## What's *not* in a backup
+
+A bundle restore replaces app data and settings. It does **not** restore:
+
+- **Auto-update binaries** — those are managed by Tauri's updater on the desktop app or `brew upgrade` on Homebrew.
+- **Environment variables** — `AUDITOR_ADMIN_TOKEN`, etc., are external to the database. Re-set them in your runtime config.
+- **iPhone import helper output** — those are stand-alone `.txt` / `.csv` files; back them up separately if you want to keep them.
+
+## Disaster recovery
+
+If `data/privacy.db` is corrupted (rare; SQLite is durable, but not invincible to underlying disk failure):
+
+<Steps>
+  <Step title="Quarantine the broken DB">
+    Don't run the app against a corrupted file — it can make things worse.
+
+    ```bash
+    mv data/privacy.db data/privacy.db.broken
+    mv data/privacy.db-wal data/privacy.db.broken-wal 2>/dev/null
+    mv data/privacy.db-shm data/privacy.db.broken-shm 2>/dev/null
+    ```
+  </Step>
+  <Step title="Try sqlite3 .recover">
+    ```bash
+    sqlite3 data/privacy.db.broken ".recover" | sqlite3 data/privacy.db
+    ```
+
+    SQLite's recovery tool is good — it salvages everything still readable into a fresh file.
+  </Step>
+  <Step title="Or restore the most recent backup">
+    Drop your last good `.db` (or import a bundle) and start the app. Schema migrations run on boot, so older backups upgrade automatically.
+  </Step>
+  <Step title="If both fail">
+    Start fresh with **Settings → Reset DB** (or `POST /api/reset` with the admin token). You'll re-import apps via the onboarding wizard.
+  </Step>
+</Steps>
+
+## Verifying a backup
+
+A good habit is to periodically verify your backups by restoring one into a throwaway instance:
+
+```bash
+# Spin up a temporary container pointed at a fresh data dir
+docker run --rm -p 3001:3000 -v $(pwd)/test-data:/app/data privacytracker:latest &
+
+# Import the bundle
+curl -X POST "http://localhost:3001/api/backup/restore?confirm=RESTORE" \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://localhost:3001" \
+  --data-binary @backup-2026-05-09.json
+
+# Verify counts match expectations, then tear down
+curl http://localhost:3001/api/apps | jq '.apps | length'
+docker stop $!
+rm -rf test-data
+```
+
+If the counts match what you expect from the source instance, your backup is good.
