@@ -9,11 +9,39 @@ privacytracker stores almost all configuration in the SQLite `app_settings` key/
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `AUDITOR_ADMIN_TOKEN` | (unset) | Optional shared secret. When set, destructive routes (`POST /api/reset`, `DELETE /api/apps`, `POST /api/settings`) require an `X-Auditor-Admin-Token` header verified with `crypto.timingSafeEqual`. Failed attempts are logged to `audit_log` with IP + user agent. |
-| `BUILD_STANDALONE` | (unset) | Build-time flag for `npm run build:standalone` (used by the Tauri sidecar build). |
-| `NODE_V8_COVERAGE` | (unset) | Enables V8 coverage for `npm run test:coverage`. |
+| `AUDITOR_ADMIN_TOKEN` | (unset) | Shared secret. When set, destructive routes (`POST /api/reset`, `DELETE /api/apps`, `POST /api/settings`) require an `X-Auditor-Admin-Token` header verified with `crypto.timingSafeEqual`. Failed attempts are logged to `audit_log` with IP + user agent. Optional on a loopback-only install; **mandatory** once the instance is network-exposed (see below). |
+| `PRIVACYTRACKER_DATA_DIR` | `<cwd>/data` | Absolute path to the data directory holding `privacy.db`. Honoured unconditionally — the Tauri shell injects it for the desktop build, and it's the escape hatch for a custom Docker mount. Created on demand at mode `0700`. |
 
-That's the entire surface area. Everything else (AI provider, sync schedule, Wayback toggles, notification prefs, focus state, feature-flag overrides) lives in `app_settings` and is changed through the UI.
+### Network exposure
+
+privacytracker's default posture is **loopback-only**, and it enforces that by
+checking the request's `Host` header against an allowlist. Deploying it
+anywhere other than `127.0.0.1` means setting these — without them a LAN
+browser cannot load the app at all.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PRIVACYTRACKER_ALLOWED_HOSTS` | (unset) | Comma-separated `Host` values to accept, **appended** to the always-allowed loopback set (`localhost`, `127.x`, `::1`). Supports `*.suffix` wildcards. Listing a non-loopback entry also flips the instance to network-exposed, which makes `AUDITOR_ADMIN_TOKEN` mandatory. |
+| `PRIVACYTRACKER_NETWORK_EXPOSED` | (unset) | Boolean (`1`/`true`/`yes`/`on`). Forces the network-exposed posture without naming a host — for a reverse proxy that rewrites `Host`. |
+| `PRIVACYTRACKER_TRUST_PROXY` | (unset) | Boolean. Honour `X-Forwarded-Host` / `X-Forwarded-For` for the host allowlist, rate-limit keys, and audit IPs. This is an operator assertion that a trusted proxy sits in front — leave it unset for a direct bind, where those headers are attacker-controlled. |
+| `PRIVACYTRACKER_BIND_HOST` | (unset) | Explicit bind interface. A specific non-loopback IP implies network-exposed. `HOSTNAME` is deliberately *not* trusted as a bind signal, because Docker sets it to the container ID. |
+
+<Warning>
+  Trust is derived from deployment config, never from request headers — a
+  `Host: localhost` from a LAN attacker cannot downgrade the instance to
+  "local". `lib/deployment-trust.ts` is the single source of truth, and it's
+  read fresh on every call.
+</Warning>
+
+### Build and runtime
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PRIVACYTRACKER_RUNTIME` | (unset) | Set to `desktop` by the Tauri sidecar launcher. Gates desktop-only surfaces and feature-flag resolution. |
+| `WORKER_DISABLED` | (unset) | Suppresses the background scheduler tick — used by tests and by processes that should not run sync. |
+| `BUILD_STANDALONE` | (unset) | Build-time flag for `pnpm build:standalone` (the Tauri sidecar bundle). |
+
+Everything else (AI provider, sync schedule, Wayback toggles, notification prefs, focus state, feature-flag overrides) lives in `app_settings` and is changed through the UI.
 
 ## AI providers
 
@@ -106,12 +134,23 @@ When an empty quarter has no Wayback capture anywhere in the ±42-day tolerance 
 
 ## Translations
 
-The UI ships through next-intl, and **today that means English only** — the localisation framework is wired up, but the English bundle is the only one that currently ships. The active language is selected at render time from your app settings (a flat route tree, with no per-locale URL prefix), so additional locales appear automatically as they're translated.
+The UI ships through next-intl. Two locales currently ship — **English (`en`)
+and Simplified Chinese (`zh`)** — at full key parity. The supported set is
+declared as `SUPPORTED_LOCALES` in `i18n.ts`.
 
-`locales/en.json` is the source of truth; every other `locales/<lang>.json` is round-tripped through Crowdin (free OSS plan). Adding or changing locales is a developer task — see [Translations](/develop/translations) under the Develop tab for the full workflow.
+The active language is resolved per request from the `NEXT_LOCALE` cookie,
+falling back to `en` when the cookie is absent or holds an unsupported value.
+Routes are flat, with no per-locale URL prefix, so additional locales appear
+automatically as they're translated — drop a `locales/<code>.json` and append
+the code to `SUPPORTED_LOCALES`.
+
+`locales/en.json` is the source of truth; every other `locales/<lang>.json` is
+round-tripped through Crowdin (free OSS plan). Adding or changing locales is a
+developer task — see [Translations](/develop/translations) under the Develop
+tab for the full workflow.
 
 ```bash
-npm run lint:i18n   # check key parity against en.json
+pnpm lint:i18n   # check key parity against en.json
 ```
 
 ## Health and readiness

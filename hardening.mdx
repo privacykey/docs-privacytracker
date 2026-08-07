@@ -214,17 +214,21 @@ Periodically verify a backup by restoring it into a throwaway instance — a bac
 
 ## Disable inbound auto-update on Tier 3
 
-The Tauri auto-updater fetches signed patches from GitHub releases on a recurring schedule. The ed25519 signature check makes this safe in principle, but for a Tier 3 (public-internet) deploy you may want to *disable* automatic updates and manually pull-and-verify each release instead. Tradeoff: you lose silent security patches; you gain deterministic timing of every code change.
+The Tauri auto-updater fetches signed patches from GitHub releases on a recurring schedule, verified against the bundled minisign public key. For a Tier 3 (public-internet) deploy you may want to stop automatic updates and pull-and-verify each release by hand instead. Tradeoff: you lose silent security patches; you gain deterministic timing of every code change.
 
-```bash
-# In the desktop app's launchd plist:
-<key>EnvironmentVariables</key>
-<dict>
-  <key>AUDITOR_DISABLE_AUTO_UPDATE</key><string>1</string>
-</dict>
-```
+<Warning>
+  **There is currently no supported switch for this.** The updater plugin is
+  registered unconditionally in `src-tauri/src/main.rs` and
+  `tauri.conf.json` sets `plugins.updater.active: true` — there is no
+  environment variable and no in-app toggle that turns it off.
+</Warning>
 
-Docker installs don't have this concern — image updates are explicit (`docker compose pull && up`).
+If you need deterministic update timing today, the options are:
+
+- **Run the Docker build instead of the desktop app** on Tier 3 hosts. Image updates are explicit (`docker compose pull && up`), which is the posture this tier wants anyway.
+- **Block the update endpoint at the host firewall** — the updater reads `https://github.com/privacykey/privacytracker/releases/latest/download/latest.json`. A failed check now backs off (15 minutes, doubling, capped at a day) rather than retrying tightly, so a blackholed endpoint is not a busy loop.
+
+Tracking a first-class opt-out: [privacytracker issues](https://github.com/privacykey/privacytracker/issues).
 
 ## Network restrictions
 

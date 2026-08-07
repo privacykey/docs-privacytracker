@@ -204,7 +204,7 @@ The data and helpers live in `lib/privacy-profile.ts`:
 - `PROFILE_PRESET_META` — label, icon, and `severityCls` so the active-pill accent walks the green → yellow → orange → red gradient.
 - `matchPreset(profile)` — returns the matching preset key or `null`.
 
-`PROFILE_PRESETS.balanced` is locked to `DEFAULT_PROFILE` by reference (`{ ...DEFAULT_PROFILE }`), and `tests/profile-presets.test.ts` pins the equality.
+`PROFILE_PRESETS.balanced` is locked to `DEFAULT_PROFILE` by reference (`{ ...DEFAULT_PROFILE }`), and `tests/app/profile-presets.test.ts` pins the equality.
 
 <Warning>
   If you change `DEFAULT_PROFILE` you change the Balanced preset. That's intentional, but note that returning users currently sitting on the Balanced highlight will silently migrate to the new tier set. Communicate the change in release notes if it's user-visible.
@@ -223,7 +223,7 @@ The data and helpers live in `lib/privacy-profile.ts`:
 2. Add a complete tier map under `PROFILE_PRESETS`.
 3. Add meta under `PROFILE_PRESET_META` (pick a `severityCls` so the active-pill accent fits the gradient).
 4. Add `labels.<key>` and `descriptions.<key>` strings under `settings.profile_editor.presets` in `locales/en.json`. Crowdin handles the other locales — see [Translations](/develop/translations).
-5. Extend the asserts in `tests/profile-presets.test.ts` if the new preset has invariants worth pinning (e.g. "must keep `SENSITIVE_INFO` at `not_collected`").
+5. Extend the asserts in `tests/app/profile-presets.test.ts` if the new preset has invariants worth pinning (e.g. "must keep `SENSITIVE_INFO` at `not_collected`").
 
 ### Carried into audit bundles
 

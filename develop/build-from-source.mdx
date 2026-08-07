@@ -65,7 +65,7 @@ npm run typecheck      # tsc --noEmit
 ```
 
 ```bash test
-npm test               # focused node:test suite (uses tsx + tests/setup-env.ts)
+npm test               # focused node:test suite (uses tsx + tests/helpers/setup-env.ts)
 npm run test:coverage  # adds V8 coverage in coverage/v8/
 ```
 
@@ -80,11 +80,11 @@ npm run build:standalone   # build the Tauri sidecar bundle (BUILD_STANDALONE=1)
 
 ## Running the iPhone import helper
 
-The companion Python tool in `tools/ios-app-import/` is stdlib-only and unrelated to the Node app — it produces a text file the web onboarding accepts.
+The companion Python tool in `scripts/ios-app-import/` is stdlib-only and unrelated to the Node app — it produces a text file the web onboarding accepts.
 
 ```bash
-python3 tools/ios-app-import/export_ios_apps.py --mode backup
-python3 tools/ios-app-import/export_ios_apps.py --mode device
+python3 scripts/ios-app-import/export_ios_apps.py --mode backup
+python3 scripts/ios-app-import/export_ios_apps.py --mode device
 ```
 
 Run its tests with:

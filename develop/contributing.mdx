@@ -77,7 +77,7 @@ If you touched build configuration (`next.config.js`, `tsconfig.json`, `package.
 npm run build       # production build, catches Next config errors
 ```
 
-If you touched `tools/ios-app-import/`:
+If you touched `scripts/ios-app-import/`:
 
 ```bash
 npm run test:ios-import-helper
@@ -97,7 +97,7 @@ Three things, in priority order.
 
 **The change should be small enough to review in one sitting.** If your branch touches a parser, a UI component, a chart, and a migration, that's four PRs. Reviewers approve smaller PRs faster, and bisecting later is easier.
 
-**Tests for parser changes are non-negotiable.** Apple's HTML is volatile. The pattern in `tests/scraper.test.ts` is to drop a captured payload into `tests/fixtures/scraper/` and assert against parsed output. When you fix a parser bug, capture the payload that was breaking, and add a test against it — that prevents regression next time Apple iterates.
+**Tests for parser changes are non-negotiable.** Apple's HTML is volatile. The pattern in `tests/app/scraper-fixture.test.ts` is to stub `global.fetch` so it returns a captured App Store payload from an in-file helper, then assert against the parsed output stored in the DB. When you fix a parser bug, capture the payload that was breaking, add it the same way, and assert on it — that prevents regression next time Apple iterates. The sibling `scraper-shoebox`, `scraper-lookup`, `scraper-advanced` and `scraper-related-shelves` tests cover the other parser eras and endpoints.
 
 **Database changes need both `CREATE TABLE` and `migrations` updates.** Forgetting one breaks upgrade paths for existing installs. The pattern is in `lib/db.ts`; copy it.
 
@@ -158,7 +158,7 @@ A few conventions to know before you open a PR:
 - **`@/*` is the path alias.** It maps to the repo root. Use it instead of `../../../lib/foo`.
 - **Server-only modules go in `lib/` with the `'server-only'` import where they must not be bundled.** Examples: `lib/feature-flags-server.ts`. Importing one of these from a Client Component fails the build.
 - **All DB writes through transactions.** Multi-step writes use `db.transaction(() => { … })()`. Don't open ad-hoc connections.
-- **Tests use `node:test` plus `tsx`.** Run via `npm test`. Look at `tests/setup-env.ts` for the standard env shape.
+- **Tests use `node:test` plus `tsx`.** Run via `npm test`. Look at `tests/helpers/setup-env.ts` for the standard env shape.
 - **Don't add new top-level dependencies casually.** Privacy is the value prop; every dep is a supply-chain question. Justify in the PR description.
 
 ## Reporting issues vs. opening PRs

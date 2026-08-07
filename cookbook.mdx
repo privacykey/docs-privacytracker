@@ -39,10 +39,10 @@ The job: get a clean view of everything installed on a child's device, surface w
     Plug the iPad into your Mac, run a Finder backup (no encryption needed), then from your privacytracker source checkout (or any clone of the main repo):
 
     ```bash
-    python3 tools/ios-app-import/export_ios_apps.py --mode backup
+    python3 scripts/ios-app-import/export_ios_apps.py --mode backup
     ```
 
-    The helper writes a `.txt` of every installed app's bundle ID and display name. If you're not running from source, the helper is published as a stand-alone script under `tools/ios-app-import/` in the [main repo](https://github.com/privacykey/privacytracker/tree/main/tools/ios-app-import) — clone just that directory and run it; you don't need the rest of the codebase.
+    The helper writes a `.txt` of every installed app's bundle ID and display name. If you're not running from source, the helper is published as a stand-alone script under `scripts/ios-app-import/` in the [main repo](https://github.com/privacykey/privacytracker/tree/main/scripts/ios-app-import) — clone just that directory and run it; you don't need the rest of the codebase.
 
     Alternatively, if you have `ideviceinstaller` installed (`brew install libimobiledevice`), use `--mode device` against the connected iPad without taking a backup.
   </Step>

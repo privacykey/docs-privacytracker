@@ -78,10 +78,10 @@ Companion Python tool (stdlib-only, Python 3.9+) that exports installed-app list
 
 ```bash
 # From a Finder / iTunes backup
-python3 tools/ios-app-import/export_ios_apps.py --mode backup
+python3 scripts/ios-app-import/export_ios_apps.py --mode backup
 
 # From a connected device (requires libimobiledevice)
-python3 tools/ios-app-import/export_ios_apps.py --mode device
+python3 scripts/ios-app-import/export_ios_apps.py --mode device
 ```
 
 You can run the helper from the source repo even when the rest of privacytracker is installed as a desktop app or Docker container — its output is just a text file the web onboarding accepts.
