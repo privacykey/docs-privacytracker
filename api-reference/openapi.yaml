@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: privacytracker API
-  version: "1.1.0"
+  version: "0.1.2"
   description: |
     HTTP API for [privacytracker](https://github.com/privacykey/privacytracker) —
     the routes under `app/api/**`. Each route is a thin wrapper over helpers in
@@ -41,7 +41,7 @@ tags:
   - name: Annotations
     description: Per-app freeform notes with tags and visibility.
   - name: Verdicts
-    description: Categorical per-app judgements (`tracking_concern`, `acceptable`, …).
+    description: Categorical per-app judgements (`safe`, `replace`, `uninstall`).
   - name: Notifications
     description: Bell-feed events and per-type notification preferences.
   - name: Activity
@@ -88,45 +88,38 @@ components:
       in: header
       name: X-Auditor-Admin-Token
       description: |
-        Required when `AUDITOR_ADMIN_TOKEN` is set in the environment. Verified
-        with `crypto.timingSafeEqual`. Failed attempts are recorded in
-        `audit_log` with IP + user agent.
+        Required when `AUDITOR_ADMIN_TOKEN` is set in the environment, and — on a
+        network-exposed instance — on the sensitive read prefixes listed on the
+        [Overview page](/api-reference/introduction#authentication). Verified with
+        `crypto.timingSafeEqual`. Missing or wrong token returns 401. Failed
+        attempts are recorded in `audit_log` with IP + user agent.
+
+        Browser callers may send the `pt_admin_token` HttpOnly cookie instead;
+        it is accepted everywhere this header is. Obtain it from
+        `POST /api/auth/admin-token/login`.
+    adminTokenCookie:
+      type: apiKey
+      in: cookie
+      name: pt_admin_token
+      description: |
+        HttpOnly, `SameSite=strict`, 8-hour session cookie issued by
+        `POST /api/auth/admin-token/login`. Equivalent to the
+        `X-Auditor-Admin-Token` header on every gated route.
 
   schemas:
-    ErrorCode:
-      type: string
-      description: |
-        Stable, machine-readable error code returned in `{ "error": "<code>" }`.
-        New codes may be added in minor releases; existing codes don't change
-        meaning. Integrators should `switch` on this rather than parsing
-        `details`, which is human-prose and not stable.
-      enum:
-        - origin_mismatch          # CSRF check failed (Origin != Host)
-        - admin_token_required     # AUDITOR_ADMIN_TOKEN configured, header missing
-        - admin_token_invalid      # X-Auditor-Admin-Token didn't match (timingSafeEqual)
-        - confirm_required         # mutating route needs ?confirm=<value>
-        - already_running          # mutex held by another in-flight run
-        - rate_limited             # Apple returned 429; runner backed off
-        - not_found                # resource doesn't exist (app id, version id, etc.)
-        - invalid_request          # malformed body or query
-        - schema_mismatch          # bundle version newer than app version
-        - migration_failed         # boot-time migration step failed
-        - provider_unconfigured    # AI provider needed but not set
-        - provider_unreachable     # AI provider didn't respond before timeout
-        - upstream_unavailable     # apps.apple.com / archive.org / iTunes Search unreachable
-        - parser_failed            # App Store HTML didn't match any known shape
-        - quarantined              # focus / override row references a removed feature flag
-
     Error:
       type: object
       required: [error]
+      description: |
+        Standard error envelope. `error` is a human-readable sentence, **not** a
+        stable machine code — branch on the HTTP status, not on the string.
+        A few routes add extra structured fields alongside it; those are
+        documented on the operation that returns them.
       properties:
         error:
-          $ref: "#/components/schemas/ErrorCode"
-        details:
           type: string
-          nullable: true
-          description: Human-readable detail. Not stable across releases. Useful for logging, not for branching.
+          description: Human-readable message. Not stable across releases.
+          example: Admin token required
 
     App:
       type: object
@@ -346,11 +339,17 @@ components:
       description: |
         Versioned export of every app, label, snapshot, annotation,
         notification, focus state, and feature-flag override. Restorable into
-        the same or a later version of privacytracker.
+        any release that understands this bundle format or a later one.
+
+        Exported envelopes also carry a `signature` object (HMAC-SHA256 over
+        the canonicalised envelope, keyed per install). Restoring a bundle
+        whose signature doesn't match the target install requires
+        `allowUntrusted` — see `POST /api/backup/restore`.
       properties:
         version:
-          type: string
-          example: "1.1.0"
+          type: integer
+          description: Bundle format version — not the app version.
+          example: 1
         exportedAt:
           type: integer
           format: int64
@@ -404,24 +403,26 @@ components:
 
     HealthResponse:
       type: object
-      required: [ok]
+      required: [status]
       properties:
-        ok:
-          type: boolean
-          example: true
+        status:
+          type: string
+          enum: [ok, degraded]
+          example: ok
 
     ReadyResponse:
       type: object
-      required: [ok, db, data]
+      required: [status, checks]
       properties:
-        ok:
-          type: boolean
-        db:
+        status:
           type: string
-          enum: [reachable, unreachable]
-        data:
-          type: string
-          enum: [writable, "not writable"]
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties: true
+          description: |
+            Per-check detail from the deployment diagnostics — which probe
+            failed and why. Shape is diagnostic output, not a stable contract.
 
     ManualApp:
       type: object
@@ -476,17 +477,36 @@ components:
 
     Verdict:
       type: object
-      required: [appId, kind, updatedAt]
+      required: [appId, verdict, updatedAt]
+      description: |
+        A user's categorical judgement about one app. Stored in `app_verdicts`,
+        with a `CHECK` constraint pinning `verdict` to the three values below.
       properties:
         appId:
-          type: integer
-          format: int64
-        kind:
           type: string
-          enum: [tracking_concern, acceptable, do_not_install]
-        reason:
+          description: Apple's numeric track ID, as a string.
+          example: "324684580"
+        verdict:
+          type: string
+          enum: [safe, replace, uninstall]
+        rationale:
           type: string
           nullable: true
+        source:
+          type: string
+          enum: [user, imported]
+          description: |
+            `imported` rows come from an audit bundle, not from this endpoint.
+          readOnly: true
+        sourceName:
+          type: string
+          nullable: true
+          description: Recommender display name when `source` is `imported`; null otherwise.
+          readOnly: true
+        setAt:
+          type: integer
+          format: int64
+          readOnly: true
         updatedAt:
           type: integer
           format: int64
@@ -529,28 +549,49 @@ components:
         type: boolean
       description: |
         Map of notification type → enabled. Keys mirror the `Notification.kind`
-        enum. Migrated in v1.1 from a single JSON blob in `app_settings`.
+        enum. Migrated from a single `notification_prefs` JSON blob in
+        `app_settings` by step 3 of the boot migration.
 
     Focus:
       type: object
-      required: [audience, goals]
+      required: [audience]
+      description: |
+        Audience + goal booleans, flat — the goals are top-level fields, not a
+        nested object. `monitor` and `cleanup` were formerly `understand` and
+        `declutter`; the boot migration re-keys stored rows.
       properties:
         audience:
           type: string
           enum: [self, loved_one, guardian]
-        goals:
-          type: object
-          properties:
-            understand:
-              type: boolean
-            declutter:
-              type: boolean
-            minimal:
-              type: boolean
-              description: Mutually exclusive with `understand` and `declutter`.
-            accessibility:
-              type: boolean
-              description: Modifier — combines with any primary goal.
+        monitor:
+          type: boolean
+          default: false
+        cleanup:
+          type: boolean
+          default: false
+        minimal:
+          type: boolean
+          default: false
+          description: Mutually exclusive with `monitor` and `cleanup`.
+        accessibility:
+          type: boolean
+          default: false
+          description: Modifier — combines with any primary goal.
+        workflow:
+          type: string
+          enum: [self_monitor, self_cleanup, other_handoff, other_monitor, custom]
+          description: |
+            Inferred from audience + goals when omitted on write, collapsing to
+            `custom` where the answer is ambiguous. `other_handoff` is what
+            unlocks audit-bundle export.
+        childAgeBand:
+          type: string
+          nullable: true
+          description: Guardian-only age band. Empty string or null clears it.
+        aiConfigured:
+          type: boolean
+          readOnly: true
+          description: Derived from `ai_provider`. Read-only.
 
     FeatureFlagsSnapshot:
       type: object
@@ -637,14 +678,136 @@ components:
       additionalProperties: true
 
 paths:
+  /api/auth/admin-token/login:
+    post:
+      tags: [Admin]
+      summary: Exchange the admin token for a session cookie
+      description: |
+        Constant-time compares the supplied token against `AUDITOR_ADMIN_TOKEN`
+        and, on a match, sets `pt_admin_token` — HttpOnly, `SameSite=strict`,
+        `Secure` over HTTPS, 8-hour max-age. Every route that accepts the
+        `X-Auditor-Admin-Token` header accepts this cookie instead.
+
+        Exempt from the non-local admin gate (it is how a caller obtains the
+        cookie), but same-origin is still required. Rate-limited to 5 attempts
+        per minute per client, with an IP-independent backstop of 100 failed
+        attempts per 15 minutes.
+      security:
+        - sameOrigin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        "200":
+          description: Cookie set.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              example: pt_admin_token=…; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+        "400":
+          description: Body malformed or token missing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Token did not match.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Same-origin check failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Per-client limit or the global brute-force backstop tripped.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: "`AUDITOR_ADMIN_TOKEN` is not configured on the server."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/admin-token/logout:
+    post:
+      tags: [Admin]
+      summary: Clear the admin-token session cookie
+      description: |
+        Server-side counterpart to login — the cookie is HttpOnly, so JavaScript
+        cannot delete it. Same-origin required.
+      security:
+        - sameOrigin: []
+      responses:
+        "200":
+          description: Cookie cleared.
+        "403":
+          description: Same-origin check failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/admin-token/status:
+    get:
+      tags: [Admin]
+      summary: Is an admin token configured, and is this caller unlocked?
+      description: Never returns the token itself.
+      responses:
+        "200":
+          description: Session state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [configured, unlocked]
+                properties:
+                  configured:
+                    type: boolean
+                    description: "`AUDITOR_ADMIN_TOKEN` is set on the server."
+                  unlocked:
+                    type: boolean
+                    description: This request carried a valid cookie or header.
+
   /api/health:
     get:
       tags: [Health]
       summary: Liveness probe
-      description: "Returns 200 with `{ ok: true }` whenever the process is responding. Used for cheap uptime checks."
+      description: "Returns 200 with `{ status: \"ok\" }` whenever the process is responding and a one-row SQLite ping succeeds; 503 with `{ status: \"degraded\" }` otherwise. Used for cheap uptime checks."
       responses:
         "200":
           description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: DB ping failed.
           content:
             application/json:
               schema:
@@ -655,9 +818,10 @@ paths:
       tags: [Health]
       summary: Readiness probe
       description: |
-        Returns 200 with `{ ok: true }` only when the database is reachable
-        **and** the data directory is writable. Used by container healthchecks
-        and reverse-proxy readiness gates.
+        Returns 200 with `{ status: "ready" }` only when the database is
+        reachable **and** the data directory is writable; otherwise 503 with
+        `{ status: "not_ready" }` and the failing entries in `checks`. Used by
+        container healthchecks and reverse-proxy readiness gates.
       responses:
         "200":
           description: Healthy.
@@ -758,8 +922,14 @@ paths:
       responses:
         "200":
           description: Deleted.
+        "401":
+          description: "Admin token required but missing or invalid."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
-          description: CSRF or admin-token check failed.
+          description: "Same-origin CSRF check failed."
           content:
             application/json:
               schema:
@@ -822,7 +992,16 @@ paths:
               schema:
                 $ref: "#/components/schemas/ScrapeResult"
         "429":
-          description: Apple rate-limited the request.
+          description: |
+            Rate-limited. Two causes: privacytracker's own per-client limiter
+            (30 requests/minute on this route), or Apple rate-limiting the
+            upstream fetch. The internal limiter sets `Retry-After` and clears
+            within its window; Apple's cooldown is longer.
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying. Set by the internal limiter.
+              schema:
+                type: integer
           content:
             application/json:
               schema:
@@ -1024,8 +1203,18 @@ paths:
       summary: Export a versioned backup bundle
       description: |
         Returns a JSON bundle with every app, label, snapshot, annotation,
-        notification, focus state, and feature-flag override. Versioned —
-        restorable into the same or a later release.
+        notification, focus state, and feature-flag override. Signed with this
+        install's key, so it restores here without extra flags.
+
+        This read requires the admin token whenever `AUDITOR_ADMIN_TOKEN` is
+        set OR the instance is network-exposed. `/api/backup/` is one of the
+        proxy's gated read prefixes, and this handler additionally checks
+        `adminTokenConfigured() || isNetworkExposed()` — so a loopback-only
+        install with a token configured still gets a 401.
+      security:
+        - {}
+        - adminToken: []
+        - adminTokenCookie: []
       responses:
         "200":
           description: JSON bundle.
@@ -1033,6 +1222,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BackupBundle"
+        "401":
+          description: "Admin token required (configured or network-exposed) and missing or invalid."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/backup/preview:
     post:
@@ -1071,18 +1266,28 @@ paths:
       tags: [Backup]
       summary: Restore a backup bundle
       description: |
-        Wipes the existing database and reloads from the bundle. Requires the
-        typed-confirmation query parameter `confirm=RESTORE`.
+        Wipes the existing database and reloads from the bundle. There is no
+        `confirm` parameter — the typed `RESTORE` step exists only in the
+        browser UI, so an API call restores immediately.
+
+        Envelopes are HMAC-signed with a key unique to the exporting install.
+        A bundle from anywhere else fails verification and is rejected with
+        409 unless `allowUntrusted` is set.
+
+        Rate-limited to 3 attempts per 10 minutes.
       security:
         - sameOrigin: []
           adminToken: []
       parameters:
         - in: query
-          name: confirm
-          required: true
+          name: allowUntrusted
+          required: false
           schema:
             type: string
-            enum: [RESTORE]
+            enum: ["1", "true"]
+          description: |
+            Restore a bundle whose signature doesn't match this install.
+            Equivalent to the `x-allow-untrusted-backup` header.
       requestBody:
         required: true
         content:
@@ -1093,7 +1298,36 @@ paths:
         "200":
           description: Restore complete.
         "400":
-          description: Confirmation parameter missing or wrong value.
+          description: Bundle malformed or a newer format than this app supports.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: "Admin token required but missing or invalid."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: |
+            Either the bundle didn't originate on this install (see `code`), or
+            a sync is in flight.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Error"
+                  - type: object
+                    properties:
+                      code:
+                        type: string
+                        enum: [untrusted_backup]
+                      signaturePresent:
+                        type: boolean
+                        description: False when the bundle carried no signature at all.
+        "429":
+          description: More than 3 restore attempts in 10 minutes.
           content:
             application/json:
               schema:
@@ -1153,8 +1387,26 @@ paths:
       responses:
         "200":
           description: Reset complete.
+        "401":
+          description: "Admin token required but missing or invalid."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
-          description: CSRF or admin-token check failed.
+          description: "Same-origin CSRF check failed."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "A sync is currently running."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: "More than 30 reset attempts in 10 minutes."
           content:
             application/json:
               schema:
@@ -1171,8 +1423,14 @@ paths:
       responses:
         "200":
           description: Start-over complete.
+        "401":
+          description: "Admin token required but missing or invalid."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
-          description: CSRF or admin-token check failed.
+          description: "Same-origin CSRF check failed."
           content:
             application/json:
               schema:
@@ -1553,8 +1811,7 @@ paths:
         - in: query
           name: appId
           schema:
-            type: integer
-            format: int64
+            type: string
       responses:
         "200":
           description: Verdict list.
@@ -1577,10 +1834,34 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/Verdict"
+              type: object
+              required: [appId, verdict]
+              properties:
+                appId:
+                  type: string
+                  example: "324684580"
+                verdict:
+                  type: string
+                  enum: [safe, replace, uninstall]
+                rationale:
+                  type: string
+                  nullable: true
       responses:
-        "200":
+        "201":
           description: Verdict written.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verdict:
+                    $ref: "#/components/schemas/Verdict"
+        "400":
+          description: "Missing `appId`, or `verdict` outside the allowed set."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     delete:
       tags: [Verdicts]
       summary: Clear a verdict for an app
@@ -1591,8 +1872,7 @@ paths:
           name: appId
           required: true
           schema:
-            type: integer
-            format: int64
+            type: string
       responses:
         "200":
           description: Cleared.
@@ -1844,6 +2124,16 @@ paths:
     get:
       tags: [AI]
       summary: Read AI debug log entries
+      description: |
+        This read requires the admin token whenever `AUDITOR_ADMIN_TOKEN` is
+        set OR the instance is network-exposed. `/api/ai/debug-log` is one of
+        the proxy's gated read prefixes, and this handler additionally checks
+        `adminTokenConfigured() || isNetworkExposed()` — so a loopback-only
+        install with a token configured still gets a 401.
+      security:
+        - {}
+        - adminToken: []
+        - adminTokenCookie: []
       parameters:
         - in: query
           name: limit
@@ -2134,6 +2424,13 @@ paths:
     get:
       tags: [Import / export]
       summary: Export apps + labels as CSV or JSON
+      description: |
+        On a network-exposed instance this read requires the admin token —
+        `/api/export` is one of the gated read prefixes.
+      security:
+        - {}
+        - adminToken: []
+        - adminTokenCookie: []
       parameters:
         - in: query
           name: format
@@ -2161,27 +2458,39 @@ paths:
         Curated subset suitable for sharing. Notes flagged `private` are excluded
         by SQL filter at build time. See [Security & trust → Audit-bundle export
         threat model](/security#audit-bundle-export-threat-model).
+
+        Gated: allowed when the `flag.settings.admin.export.audit_bundle` feature
+        flag resolves to `on`, or when `flag.focus.workflow` is `other_handoff`.
+        Otherwise 403. On a network-exposed instance the admin token is required
+        too — `/api/export` is a gated read prefix, and this is a mutation.
       security:
         - sameOrigin: []
       requestBody:
-        required: true
+        required: false
+        description: |
+          Optional. The bundle always covers every tracked app — there is no
+          per-app selection on this route.
         content:
           application/json:
             schema:
               type: object
               properties:
-                appIds:
-                  type: array
-                  items:
-                    type: integer
-                    format: int64
-                  description: Defaults to all tracked apps.
-                includePrivacyProfile:
+                recommenderName:
+                  type: string
+                  nullable: true
+                  description: |
+                    Free-text name attached to your annotations on the
+                    recipient's view. Falls back to "your friend".
+                includeRecommenderProfile:
+                  type: boolean
+                  default: true
+                  description: Include the privacy profile you assessed against.
+                migrationFlow:
                   type: boolean
                   default: false
-                attribution:
-                  type: string
-                  description: Free-text name attached to your annotations on the recipient's view.
+                  description: |
+                    Mark the bundle as a same-user migration, so the receiving
+                    install skips the provenance banner.
       responses:
         "200":
           description: Bundle ready for download.
@@ -2189,6 +2498,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditBundle"
+        "403":
+          description: |
+            Export not enabled for this focus — neither the feature flag nor an
+            `other_handoff` workflow allows it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: More than 5 exports in a minute.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/import/audit-bundle:
     post:
@@ -2248,7 +2575,7 @@ paths:
       summary: List server-local rolling snapshots
       responses:
         "200":
-          description: Snapshot files in `data/snapshots/`.
+          description: Snapshot files in `data/backups/` under the data directory.
           content:
             application/json:
               schema:
@@ -2320,6 +2647,13 @@ paths:
       description: |
         Self-host-friendly summary suitable for the Settings page or a support
         bundle. Never includes annotations, AI keys, or app names.
+
+        On a network-exposed instance this read requires the admin token —
+        `/api/deployment/` is one of the gated read prefixes.
+      security:
+        - {}
+        - adminToken: []
+        - adminTokenCookie: []
       responses:
         "200":
           description: Diagnostics payload.
@@ -2335,6 +2669,13 @@ paths:
       description: |
         Same shape as `/api/deployment/diagnostics` but framed as a single
         copy/paste blob suitable for pasting into a GitHub issue.
+
+        On a network-exposed instance this read requires the admin token —
+        `/api/deployment/` is one of the gated read prefixes.
+      security:
+        - {}
+        - adminToken: []
+        - adminTokenCookie: []
       responses:
         "200":
           description: Plain-text bundle.

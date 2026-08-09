@@ -11,7 +11,7 @@ If you just want to use privacytracker, the [self-host quickstart](/quickstart) 
 
 <Steps>
   <Step title="Install Node 24 LTS">
-    privacytracker pins to Node 24 in `engines.node` (`>=24.0.0 <26.0.0`). Earlier versions will fail `npm install` on the better-sqlite3 native build.
+    privacytracker pins to Node 24 in `engines.node` (`>=24.0.0 <27.0.0`), and `.nvmrc` is `24`. Earlier versions will fail `npm install` on the better-sqlite3 native build.
 
     ```bash
     # macOS, with Homebrew
@@ -60,7 +60,7 @@ This produces the same artefact that ships in the desktop app and Docker image. 
 
 <CodeGroup>
 ```bash lint
-npm run lint           # ESLint flat config for Next 16
+npm run lint           # Ultracite (Biome) — lint + format check
 npm run typecheck      # tsc --noEmit
 ```
 

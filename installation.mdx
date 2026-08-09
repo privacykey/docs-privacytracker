@@ -88,16 +88,32 @@ You can run the helper from the source repo even when the rest of privacytracker
 
 ## Behind a reverse proxy
 
-For trusted-LAN deployments, the project ships sample Caddy and Traefik configs. The headline rule is simple: privacytracker enforces a same-origin CSRF check on every destructive route, so the proxy must forward the original `Host` header. See the [Reverse Proxy guide on the Plane board](https://sites.plane.so/issues/39b6604351894f09a5e903acce37d265) for working samples.
+For trusted-LAN deployments the project ships working Compose stacks in the repo checkout — you don't need to write a proxy config from scratch:
+
+```
+deploy/caddy/Caddyfile         reverse-proxy config, TLS + optional basic auth
+deploy/caddy/compose.yaml      privacytracker + Caddy, ready to `docker compose up`
+deploy/caddy/.env.example      image tag, hostname, admin token
+deploy/traefik/compose.yaml    the Traefik equivalent
+deploy/traefik/.env.example
+```
+
+Copy the `.env.example` next to the compose file, fill it in, and bring the stack up from that directory.
+
+Three rules apply here, and the samples only cover the first. privacytracker enforces a same-origin CSRF check on every destructive route, so the proxy must forward the original `Host` header — both sample proxies do that out of the box.
+
+The second one is yours to add. privacytracker only honours `X-Forwarded-For` / `X-Forwarded-Host` when `PRIVACYTRACKER_TRUST_PROXY` is set, and neither `.env.example` carries it, nor do the sample `compose.yaml` files pass it into the app container. Until you add it to the `privacytracker` service's `environment:` block yourself — the root `docker-compose.yml` documents the variable inline — rate-limit keys and `audit_log.actor_ip` collapse to the literal `local`, meaning one shared rate-limit bucket per route and no usable client IP in the audit trail. See [Hardening → TLS via reverse proxy](/hardening#tls-via-reverse-proxy) for the threat-model walkthrough.
+
+The third one is what actually breaks the deployment, and it is also yours to add. `proxy.ts` rejects every request whose `Host` isn't allowlisted — `GET` included, before any other gate — with 400 `{"error":"Host not allowed"}`, and the default allowlist is loopback only. Neither sample passes `PRIVACYTRACKER_ALLOWED_HOSTS` into the app container and neither `.env.example` mentions it; the stacks work out of the box only because `PRIVACYTRACKER_HOST` defaults to `privacytracker.localhost` and `*.localhost` is treated as loopback. The moment you follow the `.env.example` comment and set a LAN DNS name, mDNS name, or a real domain, every request 400s until you add that same name to `PRIVACYTRACKER_ALLOWED_HOSTS` in the `privacytracker` service's `environment:` block.
 
 ## Verify the install
 
 ```bash
 curl http://localhost:3000/api/ready
-# {"ok":true,"db":"reachable","data":"writable"}
+# {"status":"ready","checks":{...}}
 ```
 
-If you get `{"ok":false}`, check write permissions on the `data/` directory and confirm the process can open `data/privacy.db`. WAL mode plus a 5-second `busy_timeout` are set on every open, so concurrent reads while a write is in flight should never block longer than that.
+If you get `{"status":"not_ready"}` (HTTP 503), check write permissions on the `data/` directory and confirm the process can open `data/privacy.db`. WAL mode plus a 5-second `busy_timeout` are set on every open, so concurrent reads while a write is in flight should never block longer than that.
 
 ## Where the data lives
 

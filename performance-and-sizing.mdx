@@ -18,7 +18,9 @@ Idle privacytracker (no scrape running, no users connected):
 | **Disk (DB)** | see [Disk per year](#disk-per-year-of-history) | grows linearly with apps × snapshots |
 | **Network egress (idle)** | zero | 30-min scheduler tick fires scrapes if `sync_schedule` is on |
 
-The Next.js process is the dominant memory user. better-sqlite3 keeps the DB connection open in WAL mode; the connection itself is a few MB. There's no separate background worker — the 30-minute ticker runs in the same process via `instrumentation.ts`.
+The Next.js process is the dominant memory user. better-sqlite3 keeps a DB connection open in WAL mode; the connection itself is a few MB. There's no separate service to supervise — the 30-minute ticker runs in the same process via `instrumentation.ts`.
+
+One thread does get spawned, though: on the first bulk write of a process's life, `lib/db-worker-client.ts` starts a singleton `worker_threads` writer (`lib/db-worker.cjs`) holding its *own* better-sqlite3 connection to the same `privacy.db`, serialising with the main thread on the WAL write lock. Scrapes and imports both trigger it, so it's live exactly during the ~250 MB worst case above — a second V8 isolate and a second SQLite connection, both counted in the process figures. It never starts on an idle install, which is why the idle rows are lower.
 
 ## Disk per year of history
 
@@ -90,7 +92,7 @@ For a typical privacy policy of ~20 KB:
 
 privacytracker hashes policy text and skips re-summarisation when the hash is unchanged, so cosmetic edits to policies don't burn calls. The provider only sees policy text — no app names, no annotations, no telemetry. See [FAQ → How much do AI summaries cost?](/faq) for the breakdown.
 
-Set a hard upper bound in **Settings → AI → Daily token budget** if you want belt-and-braces cost protection.
+There's no in-app spend cap. If you want a hard upper bound, set a spending limit on the API key at OpenAI or Anthropic and use that key here — privacytracker never sees your provider's billing, so the ceiling has to live on their side.
 
 ## RAM headroom
 

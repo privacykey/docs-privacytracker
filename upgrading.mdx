@@ -51,14 +51,14 @@ This page covers the version-agnostic process. For per-release notes — what sp
     `instrumentation.ts` writes one activity row per migration step. The aggregate row at the end looks like:
 
     ```
-    migration_v1_completed: 5/5 steps, total: 412ms
+    migration_v1_completed: 6/6 steps, total: 412ms
     ```
 
-    From the UI: **Settings → Diagnostics → Activity log → filter `migration_*`**. From the CLI:
+    From the UI: **Settings → Admin → Developer Options → Activity log**, filtered to *Migration*. From the CLI:
 
     ```bash
     sqlite3 data/privacy.db \
-      "SELECT datetime(at/1000, 'unixepoch'), kind, details FROM activity WHERE kind LIKE 'migration_%' ORDER BY at DESC LIMIT 20;"
+      "SELECT datetime(started_at/1000, 'unixepoch'), summary, detail FROM activity_log WHERE type = 'migration' ORDER BY started_at DESC LIMIT 20;"
     ```
 
     If the aggregate row says *N/N steps*, you're done.
@@ -66,7 +66,7 @@ This page covers the version-agnostic process. For per-release notes — what sp
   <Step title="Verify health">
     ```bash
     curl http://localhost:3000/api/ready
-    # {"ok":true,"db":"reachable","data":"writable"}
+    # {"status":"ready","checks":{...}}
     ```
 
     Click through a few app detail pages, the dashboard, the bell. If anything looks wrong, see [If a migration fails](#if-a-migration-fails) below.
@@ -80,8 +80,9 @@ That's the happy path. It's been the entire process for every upgrade so far.
 `instrumentation.ts` runs serially before the app accepts requests:
 
 1. **Schema migrations.** Every `CREATE TABLE IF NOT EXISTS` runs (no-op for existing tables) plus the inline `migrations` array of `ALTER TABLE` statements. Each migration is idempotent — running it twice is safe.
-2. **Bulk-runner state checks** (3 staggered: 8s, 10s, 12s after boot). For each of `sync_running`, `wayback_import_running`, `policy_sync_running`: no-op, heal a stale lock, or auto-resume from a saved state blob with `initiator: 'resume'`.
-3. **Quarantine sweep.** Any `feature_flag_overrides` row whose key isn't in this build's `FlagKey` union gets `quarantined = 1`; rows previously quarantined whose keys are back get cleared. This is what makes downgrades-then-upgrades not lose your overrides.
+2. **Feature-flag migration** — six ordered, idempotent steps ending with the focus-goal rename. See [Feature flags → Migration](/develop/feature-flags).
+3. **Bulk-runner state checks** (3 staggered: 8s, 10s, 12s after boot). For each of `sync_running`, `wayback_import_running`, `policy_sync_running`: no-op, heal a stale lock, or auto-resume from a saved state blob with `initiator: 'resume'`.
+4. **Quarantine sweep.** Any `feature_flag_overrides` row whose key isn't in this build's `FlagKey` union gets `quarantined = 1`; rows previously quarantined whose keys are back get cleared. This is what makes downgrades-then-upgrades not lose your overrides.
 
 None of these block the UI. If migrations fail, the boot sequence renders an error screen instead of the normal app — see [If a migration fails](#if-a-migration-fails).
 
@@ -89,14 +90,19 @@ None of these block the UI. If migrations fail, the boot sequence renders an err
 
 The activity log is the canonical record of what happened during an upgrade. Useful filters when investigating:
 
-| Filter | Surfaces |
-|---|---|
-| `migration_*` | All migration step events plus the aggregate. |
-| `wayback_resumed` / `sync_resumed` / `policy_resumed` | Auto-resumed bulk runs. |
-| `*_stale_cleared` | A mutex was held with no queue and got healed. |
-| `bundle_restored` | Someone hit `POST /api/backup/restore`. Watch this column for unexpected entries. |
+Rows live in `activity_log`, with the category in `type` and the detail in `summary`. Useful slices when investigating:
 
-The log is append-only by convention — `app/api/*/route.ts` doesn't expose a delete. If it grows large, drop and recreate manually with the app stopped.
+| `type` | Surfaces |
+|---|---|
+| `migration` | Every migration step plus the `migration_v1_completed` aggregate, all in `summary`. |
+| `scheduled_sync` / `manual_sync` | Bulk sync runs. A boot-time auto-resume records as `scheduled_sync`; its `summary` ends with *(resumed after restart)*. |
+| `wayback_import` | Wayback back-fill runs. |
+| `backup_restore` | Someone hit `POST /api/backup/restore`. Watch for unexpected entries. |
+| `backup_export` / `reset` | Bundle exports and resets. |
+
+Stale-mutex heals and resumes also raise a bell notification — those carry `sync_stale_cleared` / `sync_resumed` and their wayback and policy equivalents in the **notifications** table, not here.
+
+The log is capped at the most recent 2,000 events, pruned inside `recordActivity` on every write (`ACTIVITY_RETENTION` in `lib/activity.ts`). No route deletes an individual entry, but the whole table does get wiped: `activity_log` is in `APP_DATA_TABLES_TO_TRUNCATE` (`lib/reset-tables.ts`), so both `POST /api/admin/start-over` and `POST /api/dev/wipe-apps` issue `DELETE FROM activity_log`.
 
 ## If a migration fails
 
@@ -108,11 +114,12 @@ The boot sequence renders an error screen with the failing step name, an attempt
 
     | Step | Meaning |
     |---|---|
-    | `schema` | A `CREATE TABLE` or `ALTER TABLE` failed — usually disk-full or a locked DB. |
-    | `user_intent_to_focus` | Mapping legacy `user_intent` to new focus keys (one-time, v1.1 only). |
+    | `schema_check` | A `CREATE TABLE` or `ALTER TABLE` failed — usually disk-full or a locked DB. |
+    | `user_intent_migration` | Mapping legacy `user_intent` to new focus keys (one-time). |
     | `notification_prefs_absorb` | Flattening the old JSON blob into per-type rows. |
     | `callout_rename` | Dropping override rows for renamed flags. |
     | `quarantine_check` | Quarantining unknown flag keys. |
+    | `focus_goal_rename` | Moving `flag.focus.goal.understand` / `.declutter` onto `.monitor` / `.cleanup`. |
   </Step>
   <Step title="Tap Try again">
     Migrations are idempotent. Up to 3 retries are offered.
@@ -139,7 +146,7 @@ The boot sequence renders an error screen with the failing step name, an attempt
 privacytracker supports forward migrations only. There's no built-in *downgrade* path because:
 
 - Schema migrations are non-reversible without losing data added by the new version.
-- The bundle format is forward-compatible (`v1.0` bundle → `v1.1` runtime works) but not backward-compatible (`v1.1` bundle → `v1.0` runtime refuses with `schema_mismatch`).
+- The bundle format is forward-compatible — an older bundle format restores into a newer runtime — but not backward-compatible. A bundle whose integer `version` exceeds what the running release supports is refused outright, with a message telling you to upgrade.
 
 If you need to roll back:
 

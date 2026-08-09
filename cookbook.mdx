@@ -27,13 +27,13 @@ If your situation matches one of these, follow the recipe. If it almost-but-not-
 
 ## Track every app on a kid's iPad
 
-**Audience:** `guardian`. **Goal:** `understand`. **Install path:** desktop app or Docker — whichever you'll keep running long-term.
+**Audience:** `guardian`. **Goal:** `monitor`. **Install path:** desktop app or Docker — whichever you'll keep running long-term.
 
 The job: get a clean view of everything installed on a child's device, surface what's high-severity, and notify you only when something actually changes — not every time Apple's HTML reflows.
 
 <Steps>
   <Step title="Set the focus on first run">
-    Open privacytracker, pick **Guardian** when the audience picker appears, and choose **Understand** as the primary goal. The defaults that flow from this combination raise severity-tier visibility on the dashboard, default the bell to *only changed apps*, and apply 22:00–07:00 quiet hours. You can override any of this later in **Settings → Developer Options → Feature flags**, but the defaults are tuned for exactly this scenario.
+    Open privacytracker, pick **Guardian** when the audience picker appears, and choose **Monitor my apps for changes** as the primary goal. The defaults that flow from this combination raise severity-tier visibility on the dashboard, default the bell to *only changed apps*, and apply 22:00–07:00 quiet hours. You can override any of this later in **Settings → Developer Options → Feature flags**, but the defaults are tuned for exactly this scenario.
   </Step>
   <Step title="Export the kid's app list">
     Plug the iPad into your Mac, run a Finder backup (no encryption needed), then from your privacytracker source checkout (or any clone of the main repo):
@@ -55,7 +55,7 @@ The job: get a clean view of everything installed on a child's device, surface w
     For the bell itself, leave the default **Only when categories change** filter on. Re-scrapes that produce no diff don't add to the unread badge.
   </Step>
   <Step title="(Optional) Enable AI for high-severity apps">
-    If you want plain-English summaries of the policies for apps that collect *Precise Location*, *Sensitive Contacts*, or *Financial Info*, configure an AI provider under **Settings → AI**. The summariser scores each policy against the lenses in `POLICY_TOPIC_GUIDES` (`collection_scope`, `ads_marketing`, `third_party_sharing`, `retention`, etc.) — exactly the questions a guardian wants answered. Hosted providers run a fraction of a cent per app; a local Ollama setup is free at runtime.
+    If you want plain-English summaries of the policies for apps that collect *Precise Location*, *Sensitive Contacts*, or *Financial Info*, configure an AI provider under **Settings → AI**. The summariser scores each policy against eight fixed lenses (`collection_scope`, `product_use`, `ads_marketing`, `third_party_sharing`, `tracking_analytics`, `user_controls`, `data_retention`, `children_minors`) — exactly the questions a guardian wants answered. Hosted providers run a fraction of a cent per app; a local Ollama setup is free at runtime.
 
     See [Configuration → AI providers](/configuration#ai-providers) for the full setup. To keep it scoped, summarise apps one at a time with the **Regenerate** button on each app's detail page — cover the high-severity apps and skip the kid's wallpaper app.
   </Step>
@@ -84,7 +84,7 @@ The job: you're picking between two apps that do similar things — say, two jou
     The Compare view shows privacy labels in a side-by-side severity-coded grid. *Data Used to Track You* lines up against *Data Used to Track You*, *Data Linked to You* against the same — so you can see which app has Location for tracking and which one only collects it for app functionality.
   </Step>
   <Step title="(If AI is configured) read the policy summaries side-by-side">
-    The Compare view's bottom panel pulls each app's AI-summarised privacy policy and renders them in two columns, lens-by-lens — *collection scope*, *ads & marketing*, *third-party sharing*, *retention*, *user rights*, *children*, *security*, *disclosure*. Differences in language at the *retention* lens, especially, are usually where the real distinction between two superficially-similar apps shows up.
+    The Compare view's bottom panel pulls each app's AI-summarised privacy policy and renders them in two columns, lens-by-lens — *collection scope*, *product use*, *ads & marketing*, *third-party sharing*, *tracking & analytics*, *user controls*, *data retention*, *children & minors*. Differences in language at the *data retention* lens, especially, are usually where the real distinction between two superficially-similar apps shows up.
 
     No AI configured? You can still click through to each app's policy URL on its detail page and read the source.
   </Step>
@@ -138,13 +138,13 @@ The job: run privacytracker on always-on hardware (Synology, Unraid, a Raspberry
     }
     ```
 
-    Caddy gets you automatic Let's Encrypt TLS if `privacytracker.lan` resolves on the public internet, or self-signed certs for a LAN-only deploy. The `Host` header forwarding is non-negotiable — privacytracker enforces a same-origin CSRF check on every mutating verb, so a proxy that strips the Host header will cause every action to fail with `origin_mismatch`. See [Troubleshooting → Reverse-proxy CSRF rejection](/troubleshooting#reverse-proxy-csrf-rejection) if you hit that.
+    Caddy gets you automatic Let's Encrypt TLS if `privacytracker.lan` resolves on the public internet, or self-signed certs for a LAN-only deploy. The `Host` header forwarding is non-negotiable — privacytracker enforces a same-origin CSRF check on every mutating verb, so a proxy that strips the Host header will cause every action to fail with 403 `{"error":"Cross-origin mutation rejected"}`. See [Troubleshooting → Reverse-proxy CSRF rejection](/troubleshooting#reverse-proxy-csrf-rejection) if you hit that.
   </Step>
   <Step title="Lock down the destructive routes">
     Confirm the admin token from step 2 is taking effect:
 
     ```bash
-    # Should fail with 403 (no token):
+    # Should fail with 401 {"error":"Admin token required"}:
     curl -X POST https://privacytracker.lan/api/reset \
       -H "Origin: https://privacytracker.lan"
 
@@ -154,7 +154,7 @@ The job: run privacytracker on always-on hardware (Synology, Unraid, a Raspberry
       -H "X-Auditor-Admin-Token: $AUDITOR_ADMIN_TOKEN"
     ```
 
-    The token is verified with `crypto.timingSafeEqual`. Failed attempts append to `audit_log` with the requester IP — review periodically via **Settings → Diagnostics → Audit log**.
+    The token is verified with `crypto.timingSafeEqual`. Failed attempts append to `audit_log` as `admin_token.login.invalid`. There's no UI for that table — review it with `sqlite3 data/privacy.db "SELECT datetime(created_at/1000,'unixepoch'), action, actor_ip FROM audit_log ORDER BY created_at DESC LIMIT 50;"`.
 
     For full hardening, see [Security & trust](/security#authentication-and-access-control).
   </Step>
@@ -165,7 +165,7 @@ The job: run privacytracker on always-on hardware (Synology, Unraid, a Raspberry
     0 3 * * * rsync -a /volume1/docker/privacytracker/data/ user@backup-host:/backups/privacytracker-$(date +\%F)/
     ```
 
-    Or use the in-app **Settings → Backup → Server snapshots** to keep rolling JSON bundles, then sync those out. See [Backup & restore](/backup-and-restore) for the full options.
+    Or turn on **Settings → Backup → Automatic local snapshots** to keep rolling JSON bundles under `data/backups/`, then sync those out. They're off by default. See [Backup & restore](/backup-and-restore) for the full options.
   </Step>
   <Step title="What success looks like">
     Anyone in the house can browse to `https://privacytracker.lan`, the 30-minute background sync runs unattended, the bell shows newly-changed apps without anyone needing to think about it, and `data/privacy.db` is replicated nightly to a different machine. The admin token gates `POST /api/reset` so a curious guest on the LAN can't wipe the database.
@@ -214,9 +214,11 @@ The job: an organisation needs evidence of an app's privacy disclosures going ba
     curl -X POST http://localhost:3000/api/export/audit-bundle \
       -H "Origin: http://localhost:3000" \
       -H "Content-Type: application/json" \
-      --data '{"appIds": [324684580, 333903271]}' \
+      --data '{"recommenderName": "Compliance Team"}' \
       -o privacy-audit-$(date +%F).json
     ```
+
+    The bundle covers **every** tracked app — there's no per-app selection on this route. The body takes three optional fields: `recommenderName` (the attribution shown next to your annotations, defaulting to *your friend*), `includeRecommenderProfile` (defaults to true), and `migrationFlow`. Rate-limited to 5 exports per minute.
 
     The bundle is a versioned JSON file containing the apps, every snapshot (live + Wayback), AI summaries if you have them, and any annotations marked `visibility = 'export'`. Private notes are excluded by SQL filter at build time — there is no force-include.
 
@@ -229,13 +231,15 @@ The job: an organisation needs evidence of an app's privacy disclosures going ba
 
 ## Run a privacy review with a partner or family member
 
-**Audience:** `loved_one`. **Goal:** `understand`. **Install path:** any.
+**Audience:** `loved_one`. **Goal:** `monitor`. **Install path:** any.
 
 The job: you and a partner (or another household member, or a friend you're helping) want to look at your respective app collections together — comparing notes on what each of you has installed and how concerned you each are about specific apps. You don't want to install another tool on their machine; you want to share a curated bundle they can read.
 
 <Steps>
   <Step title="Set the audience to loved_one">
     On first run pick **Loved one**, or change it later in **Settings → Your focus → Adjust**. This unlocks the audit-bundle export workflow and adjusts the dashboard's emphasis from severity-grids toward annotation visibility.
+
+    The unlocking is literal, not a UI hint: the `loved_one` audience rule resolves `flag.settings.admin.export.audit_bundle` to `on`, which is one of the two things `POST /api/export/audit-bundle` accepts — so the export is callable straight away, with `flag.focus.workflow` still at `custom`. The other route in is the focus wizard's "I'm preparing a bundle to hand to them" answer, which sets the workflow to `other_handoff`; that's what a `self` or `guardian` user needs, since for them the flag defaults to `off` and the route returns 403 until they answer it or switch the flag on under **Settings → Developer Options → Feature flags**.
   </Step>
   <Step title="Annotate as you review">
     Walk through your tracked apps and write annotations on the ones that warrant a note. Each annotation has:

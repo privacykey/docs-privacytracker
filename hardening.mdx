@@ -27,13 +27,15 @@ Pick the most restrictive box you can live with — every step below is calibrat
     **Hardening checklist:** TLS via reverse proxy, admin token set, dev endpoints blocked, off-host backups. The `cookbook` recipe at [Self-host on a home NAS for the household](/cookbook#self-host-on-a-home-nas-for-the-household) walks through this end-to-end.
   </Accordion>
   <Accordion title="Tier 3: public internet" icon="globe">
-    Reachable from anywhere. This is *not* a supported deployment model — privacytracker has no rate limiting, no user accounts, and no DDoS protection of its own. If you absolutely must, do all of Tier 2 plus: a rate-limiting reverse proxy (Cloudflare / a paid provider), IP allowlists, and an off-host TLS termination. Better: use Tailscale, WireGuard, or another mesh-VPN to keep the actual surface on a trusted network and only expose VPN authentication to the public internet.
+    Reachable from anywhere. This is *not* a supported deployment model — privacytracker has no user accounts and no DDoS protection, and its [internal rate limiter](/security#rate-limiting) is defence-in-depth rather than an edge control: without `PRIVACYTRACKER_TRUST_PROXY` every caller shares one bucket per route, so it can't tell a flood from a busy household. If you absolutely must, do all of Tier 2 plus: a rate-limiting reverse proxy (Cloudflare / a paid provider), IP allowlists, and an off-host TLS termination. Better: use Tailscale, WireGuard, or another mesh-VPN to keep the actual surface on a trusted network and only expose VPN authentication to the public internet.
   </Accordion>
 </AccordionGroup>
 
 ## TLS via reverse proxy
 
-privacytracker ships with no built-in TLS — it expects a reverse proxy to terminate. The proxy is also the natural place for rate limiting, IP allowlists, and structured access logs.
+privacytracker ships with no built-in TLS — it expects a reverse proxy to terminate. The proxy is also the natural place for edge rate limiting, IP allowlists, and structured access logs.
+
+The main repo ships working Compose stacks for two of the three proxies below — `deploy/caddy/` (Caddyfile, `compose.yaml`, `.env.example`) and `deploy/traefik/` (`compose.yaml`, `.env.example`). If you cloned the repo, start from those rather than the snippets here; the snippets are the minimum that makes the same-origin check work, not a complete deployment.
 
 <Tabs>
   <Tab title="Caddy">
@@ -48,7 +50,7 @@ privacytracker ships with no built-in TLS — it expects a reverse proxy to term
     }
     ```
 
-    Caddy auto-issues Let's Encrypt certificates if `privacytracker.lan` resolves on the public internet, or self-signed certs for a LAN-only deploy. The `Host` forwarding line is non-negotiable — privacytracker enforces a same-origin CSRF check, so a proxy that strips or rewrites the Host header will cause every mutation to fail with `origin_mismatch`.
+    Caddy auto-issues Let's Encrypt certificates if `privacytracker.lan` resolves on the public internet, or self-signed certs for a LAN-only deploy. The `Host` forwarding line is non-negotiable — privacytracker enforces a same-origin CSRF check, so a proxy that strips or rewrites the Host header will cause every mutation to fail with 403 `{"error":"Cross-origin mutation rejected"}`.
   </Tab>
   <Tab title="Traefik">
     ```yaml
@@ -121,7 +123,7 @@ docker compose up -d --force-recreate
 For the desktop app, set it in the launchd plist or your shell profile so `privacytracker.app` inherits it. Confirm it's taking effect:
 
 ```bash
-# Should fail with 403 admin_token_required
+# Should fail with 401 {"error":"Admin token required"}
 curl -X POST https://privacytracker.lan/api/reset \
   -H "Origin: https://privacytracker.lan"
 
@@ -131,7 +133,13 @@ curl -X POST https://privacytracker.lan/api/reset \
   -H "X-Auditor-Admin-Token: $AUDITOR_ADMIN_TOKEN"
 ```
 
+Error bodies here are human-readable prose, not stable machine codes — assert on the status, not the string.
+
 The token is verified with `crypto.timingSafeEqual` so token comparison runs in constant time. Failed attempts append to `audit_log` with the requester IP — see [Review the audit log](#review-the-audit-log) below.
+
+Setting the token also turns on the browser-session path: the Settings panel exchanges it once via `POST /api/auth/admin-token/login` for an 8-hour HttpOnly `pt_admin_token` cookie, so household members don't paste a secret into every request and no script running in the page can read it. `POST /api/auth/admin-token/logout` clears the session. See [Security → Browser sessions use a cookie](/security#browser-sessions-use-a-cookie-not-the-header).
+
+Once the instance is network-exposed, the token also gates a handful of sensitive **reads** — `/api/backup/`, `/api/export`, `/api/deployment/`, `/api/diagnostics/`, `/api/ai/debug-log`, `/api/import/`, `/api/desktop/diagnostics`. Any integration you point at those needs the header or the cookie too.
 
 <Warning>
   Rotating the token requires a process restart. The new value is read once on boot. Don't share the token in chat / Slack / email — treat it as a secret on the level of a database password.
@@ -144,9 +152,12 @@ privacytracker ships with `/api/dev/*` routes that are only safe in development:
 | Route | What it does |
 |---|---|
 | `POST /api/dev/reset-changelog` | Truncates the changelog |
+| `POST /api/dev/seed-notification` | Inserts a notification row |
 | `POST /api/dev/seed-sample-data` | Inserts 10 demo apps |
 | `POST /api/dev/sync-stop` | Force-clears sync mutex |
 | `POST /api/dev/wipe-apps` | Wipes every app and snapshot |
+
+All five ship in production builds — nothing in the source gates them to development.
 
 These are gated by the same CSRF and admin-token checks, but for a Tier 2/3 deploy you should also block them at the proxy so they aren't reachable at all. Caddy:
 
@@ -179,25 +190,27 @@ The `audit_log` table records destructive-route attempts and authentication fail
 | 2 (trusted LAN) | Monthly skim. |
 | 3 (public internet) | Weekly minimum, or pipe to a log aggregator. |
 
-From the UI: **Settings → Diagnostics → Audit log**. Direct SQL:
+There is no UI for this table — nothing in the app reads it. SQL is the only way in:
 
 ```bash
 sqlite3 data/privacy.db "
-  SELECT datetime(at/1000, 'unixepoch') AS ts, event, ip, user_agent
+  SELECT datetime(created_at/1000, 'unixepoch') AS ts, action, actor_ip, user_agent
   FROM audit_log
-  WHERE at > strftime('%s', 'now', '-30 days') * 1000
-  ORDER BY at DESC
+  WHERE created_at > strftime('%s', 'now', '-30 days') * 1000
+  ORDER BY created_at DESC
   LIMIT 50;
 "
 ```
 
 Things to react to:
 
-- **Repeated `admin_token_failed` from the same IP** — someone's brute-forcing. Rotate the token, then ban the IP at the proxy.
+- **Repeated `admin_token.login.invalid` from the same IP** — someone's brute-forcing. Rotate the token, then ban the IP at the proxy. `admin_token.login.rate_limited` and `admin_token.login.global_throttled` mean the built-in limiter already pushed back.
 - **Unfamiliar IPs hitting destructive routes** — even if the token check passed (i.e., they have the token), an unfamiliar source means the token leaked. Rotate.
-- **`reset_invoked` you didn't trigger** — your data was wiped. Restore from backup; investigate how the actor got the token.
+- **`reset.success` you didn't trigger** — your data was wiped. Restore from backup; investigate how the actor got the token.
 
-The table is append-only by convention — no API route deletes from it. If it grows large, drop and recreate manually with the app stopped.
+Set `PRIVACYTRACKER_TRUST_PROXY` if you want real client IPs in `actor_ip`. Without it, `X-Forwarded-For` is attacker-controlled and deliberately ignored, so every row records the literal `local` — which makes "same IP" un-observable and the first bullet unusable.
+
+Don't treat the table as tamper-proof. Individual rows are only ever appended, never deleted or rewritten, but two routes wipe the whole table: `POST /api/admin/start-over` truncates it (`audit_log` is in `START_OVER_TABLES_TO_TRUNCATE`, `lib/reset-tables.ts`), and `POST /api/backup/restore` clears it and re-inserts whatever the bundle carried. Both are admin-token routes, so the actor you'd be investigating here — someone who has the token — can erase the trail behind them. `POST /api/reset` preserves it on purpose. If you need the trail to survive that, replicate it off-host on a schedule alongside your backups. If it grows large, drop and recreate manually with the app stopped.
 
 ## Off-host backups
 
@@ -208,9 +221,9 @@ A NAS's own RAID is not a backup. For Tier 2/3, schedule a daily replica of the 
 0 3 * * * privacytracker rsync -a /opt/privacytracker/data/ backup@nas-2:/backups/privacytracker-$(date +\%F)/
 ```
 
-Or use the in-app **Settings → Backup → Server snapshots** to keep rolling JSON bundles, then sync those off-host. The bundle format is forward-compatible — a v1.0 bundle restores cleanly into v1.1+. See [Backup & restore](/backup-and-restore) for the full options.
+Or use the in-app **Settings → Backup → Automatic local snapshots** to keep rolling JSON bundles under `data/backups/`, then sync those off-host. They're off by default — enable the toggle and pick an interval. The bundle carries an integer format version, and a bundle from an older format restores cleanly into a newer release. See [Backup & restore](/backup-and-restore) for the full options.
 
-Periodically verify a backup by restoring it into a throwaway instance — a backup you've never tested isn't a backup, it's a wish.
+Periodically verify a backup by restoring it into a throwaway instance — a backup you've never tested isn't a backup, it's a wish. Note the throwaway will reject the bundle as untrusted (different install, different signing key) unless you pass `allowUntrusted=1`; see [Restoring a bundle from another install](/backup-and-restore#restoring-a-bundle-from-another-install).
 
 ## Disable inbound auto-update on Tier 3
 
@@ -240,7 +253,16 @@ If your host firewall supports it, restrict outbound network from the privacytra
 | `itunes.apple.com:443` | iTunes Search API (resolving app names) |
 | `archive.org:443` + `web.archive.org:443` | Wayback imports |
 | Your AI provider's host:port | Only if AI is enabled |
-| `api.github.com:443` | Tauri updater (desktop only) |
+| Your notification webhook's host:port | Only if you configured one |
+| `github.com:443` | Tauri updater on the desktop app — fetches `releases/latest/download/latest.json` |
+| `api.github.com:443` | Server-side update check, on **every** deployment |
+
+The last two are different things and people get them the wrong way round. `github.com` is the desktop updater's signed-patch endpoint. `api.github.com` is `lib/update-check.ts`, which runs on Docker, Node, Homebrew, and desktop alike: enabled by default, first probe 25 seconds after boot, then a 6-hour ticker that reaches the network at most once a day thanks to the cache. Block it believing it's desktop-only and you silently disable the update banner on a server install. To switch the check off properly rather than blackholing the host, set its `app_settings` flag — there's no UI toggle for it today:
+
+```bash
+sqlite3 data/privacy.db \
+  "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('update_check_enabled', 'false');"
+```
 
 Anything else is unnecessary and a yellow flag if it appears in your egress logs. A simple iptables / nftables rule scoped to the privacytracker container's UID is enough; for serious lockdown, run the container in its own network namespace.
 
@@ -253,10 +275,10 @@ Before exposing your install to anyone other than yourself:
     Verified by browser padlock + `curl -v` showing the cert.
   </Step>
   <Step title="Same-origin check passes through the proxy">
-    `curl -X POST .../api/sync/trigger -H "Origin: https://your-host"` returns 200 (or 409 *already_running*, never 403).
+    `curl -X POST .../api/sync/trigger -H "Origin: https://your-host"` returns 200, never 403. A sync already in flight is still a 200 — the body just carries `"skipped": true`.
   </Step>
   <Step title="Admin token is set and required">
-    `curl -X POST .../api/reset -H "Origin: ..."` (no token) returns 403 *admin_token_required*.
+    `curl -X POST .../api/reset -H "Origin: ..."` (no token) returns 401 `{"error":"Admin token required"}`.
   </Step>
   <Step title="Dev endpoints return 404">
     `curl -X POST .../api/dev/seed-sample-data -H "Origin: ..."` returns 404.
@@ -265,7 +287,7 @@ Before exposing your install to anyone other than yourself:
     `ls /backups/privacytracker-*/privacy.db` on the backup host shows a recent file. Restored it into a throwaway instance and counts match.
   </Step>
   <Step title="Audit log is empty (or only your own legitimate events)">
-    `SELECT * FROM audit_log ORDER BY at DESC LIMIT 20` shows nothing surprising.
+    `sqlite3 data/privacy.db "SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 20;"` shows nothing surprising.
   </Step>
 </Steps>
 
@@ -276,8 +298,8 @@ If any step fails, fix it before you tell anyone the URL.
 privacytracker is a self-hosted single-user app. There are guardrails it doesn't have, by design:
 
 - **No user accounts.** Anyone with browser access has full access. Treat the URL itself as a credential.
-- **No rate limiting on its own routes.** A bad actor inside the trust boundary can hit the API as fast as the host can answer. Rate-limit at the proxy if Tier 3.
+- **No per-caller rate limiting without a trusted proxy.** privacytracker does limit its own routes ([Rate limiting](/security#rate-limiting)) — 30/min on `/api/scrape`, 3 per 10 min on `/api/backup/restore`, 5/min on token login, and so on. But unless `PRIVACYTRACKER_TRUST_PROXY` is set, `X-Forwarded-For` is untrusted and every caller shares one bucket per route, so a bad actor inside the trust boundary consumes the same budget as the household. Rate-limit at the proxy if Tier 3.
 - **No anti-CSRF beyond same-origin.** No token-cookie pairs, no SameSite=strict-only flows. The same-origin check + the admin token are the entire CSRF surface.
-- **No append-only enforcement on `audit_log` at the SQL level.** It's append-only by convention — `app/api/*/route.ts` doesn't expose a delete — but a process with shell access to `data/privacy.db` can rewrite it. The mitigation is: don't give untrusted actors shell access.
+- **No append-only enforcement on `audit_log` at the SQL level.** Individual rows are never rewritten — the only write is an insert — but two admin-token routes clear the whole table (`POST /api/admin/start-over` truncates it, `POST /api/backup/restore` replaces it), and a process with shell access to `data/privacy.db` can rewrite it directly. So the actor you are investigating after a token leak can erase the record of their own access. The mitigation is to replicate the log off-host, and not to give untrusted actors shell access.
 
 These are conscious tradeoffs for the local-first, single-user model. If you need the missing pieces, you probably want a different tool (or a privacytracker instance per user).

@@ -61,15 +61,21 @@ Two pieces of state.
 
 ### Active focus
 
-Four rows in `app_settings`, representing a 2-axis model (audience × goals):
+Seven rows in `app_settings` — audience, four goal booleans, a workflow, and a timestamp:
 
 ```
 flag.focus.audience              = 'self' | 'loved_one' | 'guardian'
-flag.focus.goal.understand       = 'true' | 'false'
-flag.focus.goal.declutter        = 'true' | 'false'
-flag.focus.goal.minimal          = 'true' | 'false'   (mutually exclusive with understand/declutter)
+flag.focus.goal.monitor          = 'true' | 'false'
+flag.focus.goal.cleanup          = 'true' | 'false'
+flag.focus.goal.minimal          = 'true' | 'false'   (mutually exclusive with monitor/cleanup)
 flag.focus.goal.accessibility    = 'true' | 'false'   (modifier — combines with any primary goal)
+flag.focus.workflow              = 'self_monitor' | 'self_cleanup' | 'other_handoff' | 'other_monitor' | 'custom'
+flag.focus.updated_at            = epoch milliseconds of the last write
 ```
+
+`setActiveFocus()` in `lib/feature-flag-storage.ts` writes all seven in one transaction. The primary goals were re-keyed: `understand` became `monitor` and `declutter` became `cleanup`. The old names survive only as migration inputs (step 6 below) — nothing reads or writes them at runtime.
+
+`flag.focus.workflow` is inferred from audience + goals when the caller doesn't pass one, and collapses to `custom` whenever the answer is ambiguous — which is every `loved_one` and `guardian` flow, since those need a handoff-vs-monitor answer the goal tiles don't ask for. The workflow gates audit-bundle export: `POST /api/export/audit-bundle` returns 403 unless `flag.settings.admin.export.audit_bundle` resolves to `on` **or** `workflowAllowsAuditBundle()` (`lib/focus-workflow.ts`) sees `other_handoff`.
 
 ### Per-flag override
 
@@ -84,7 +90,7 @@ CREATE TABLE IF NOT EXISTS feature_flag_overrides (
 );
 ```
 
-Overrides are **explicit** — an absent row means "inherit the computed default from audience + goals". This is what lets dev options show derivation (*"on · because `goal.understand`"*) and spot overrides (*"off (custom) · would be on because `goal.understand`"*) without mutating any focus config.
+Overrides are **explicit** — an absent row means "inherit the computed default from audience + goals". This is what lets dev options show derivation (*"on · because `goal.monitor`"*) and spot overrides (*"off (custom) · would be on because `goal.monitor`"*) without mutating any focus config.
 
 `'collapsed'` is a third legal value for flags that model "visible but not expanded by default" — accordions, privacy-type cards, the a11y panel, the risk-tier legend. Roughly 8–12 flags use it; the rest stay boolean.
 
@@ -122,15 +128,16 @@ Three edits, in this order:
   </Step>
 </Steps>
 
-## Migration (v1.1)
+## Migration
 
-Migration runs eagerly in `instrumentation.ts` in 5 ordered steps:
+`lib/migrations/v1_feature_flags.ts` (`MIGRATION_VERSION = 2`) runs eagerly in `instrumentation.ts`, in 6 ordered steps:
 
 1. **Schema check** — `CREATE TABLE IF NOT EXISTS feature_flag_overrides` plus any new `app_settings` indices.
 2. **`user_intent` → audience+goals** — read the legacy key, write `flag.focus.audience` + `flag.focus.goal.*`, drop `user_intent`.
 3. **`notification_prefs` absorb** — read the JSON blob, write each notification type as `flag.notifications.types.*` rows, drop the blob.
 4. **Callout rename** — drop override rows for old keys without carrying their values across.
 5. **Quarantine check** — scan `feature_flag_overrides` for rows whose `flag_key` isn't in the registry's `FlagKey` union, mark them `quarantined = 1`. Conversely, rehabilitate previously-quarantined rows whose keys are now known.
+6. **Focus goal rename** — move `flag.focus.goal.understand` onto `flag.focus.goal.monitor` and `flag.focus.goal.declutter` onto `flag.focus.goal.cleanup`, then delete the old rows. An install from before the re-key keeps its focus; a new key that already holds a value wins.
 
 Each step is idempotent. Failures abort the migration and surface an error UI with the failing step name. Up to 3 retries; after that, the error screen offers a "Reset DB" escape hatch.
 

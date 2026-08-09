@@ -65,7 +65,7 @@ The contribution areas with the highest leverage and the lowest barrier:
 The full pre-flight is fast — run all four:
 
 ```bash
-npm run lint        # ESLint flat config for Next 16
+npm run lint        # Ultracite (Biome) — lint + format check
 npm run typecheck   # tsc --noEmit
 npm test            # focused node:test suite
 npm run lint:i18n   # locales/*.json key parity against en.json
@@ -113,7 +113,7 @@ Most parser breakage takes one of two forms:
 
 | Symptom | Fix |
 |---|---|
-| **App's labels stop appearing entirely** | Apple changed the shelf shape. Walk the three-layer fallback chain in `saveToDb`; the breaking change is usually a renamed key (`shelfMapping` → `something_else`) or a new wrapper object. |
+| **App's labels stop appearing entirely** | Apple changed the shelf shape. Walk the four-layer fallback chain in `prepareScrapeWritePlan` (`lib/scraper.ts`, called from `fetchAndParseApp`); the breaking change is usually a renamed key (`shelfMapping` → `something_else`) or a new wrapper object. |
 | **Privacy-policy link not detected** | Apple's "Developer's Privacy Policy" aria-label sometimes uses a curly `'` instead of straight `'`, or localised aria-labels diverge. Widen the regex in `lib/scraper.ts → extractPrivacyPolicyUrl`. |
 
 Always include the failing App Store URL in the PR description so reviewers can verify the fix without a separate hunt.
@@ -165,7 +165,7 @@ A few conventions to know before you open a PR:
 
 Bug reports are valuable on their own — you don't have to fix what you found.
 
-- **Bugs and feature requests:** [github.com/privacykey/privacytracker/issues](https://github.com/privacykey/privacytracker/issues), `bug_report.yml` template. Paste your support bundle (**Settings → Diagnostics → Copy support bundle**) — it has system info, app version, sync state, and the most recent activity log without any of your tracked apps' data.
+- **Bugs and feature requests:** [github.com/privacykey/privacytracker/issues](https://github.com/privacykey/privacytracker/issues), `bug_report.yml` template. Paste your support bundle (**Settings → Admin → Deployment Diagnostics → Copy support bundle**) — it has system info, app version, sync state, and the most recent activity log without any of your tracked apps' data.
 - **Security findings:** [GitHub Private Vulnerability Reporting](https://github.com/privacykey/privacytracker/security/advisories/new). Don't open a public issue for security.
 
 ## Code of conduct

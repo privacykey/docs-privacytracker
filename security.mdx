@@ -16,6 +16,8 @@ What privacytracker protects against:
 - **Silent privacy-label changes.** The whole point. Snapshots + diffs + notifications surface when an app's disclosed data collection changes without you noticing.
 - **Cross-origin abuse of the local API.** Same-origin CSRF check on every mutating verb. A malicious tab can't trigger `POST /api/scrape` against your local install.
 - **Casual access to destructive routes when the API is exposed beyond localhost.** The optional `AUDITOR_ADMIN_TOKEN` adds a shared-secret layer on top of CSRF.
+- **Brute-forcing the admin token.** Token login is capped at 5 attempts per minute, plus an absolute backstop that trips after 100 failed attempts in 15 minutes no matter where they come from. Comparison is constant-time. See [Rate limiting](#rate-limiting) for what the per-caller bucket is actually keyed on.
+- **DNS rebinding.** Every request — including `GET` — is rejected with `400 Host not allowed` unless its effective `Host` is on the allowlist, which defaults to loopback only.
 - **Silent ed25519 signature stripping during desktop auto-update.** The Tauri updater verifies every patch's signature before applying it.
 - **Force-include of private annotations in audit-bundle exports.** SQL-level filter at build time; no URL parameter or escape hatch can override it.
 - **Unwitting AI provider exfiltration.** AI is opt-in and disabled by default. When enabled, only privacy-policy text is sent — never app names, your annotations, or telemetry of any kind.
@@ -24,13 +26,13 @@ What privacytracker does *not* protect against:
 
 - **A malicious or compromised host machine.** If your laptop is rooted, privacytracker can't protect data inside it. Use full-disk encryption.
 - **A compromised AI provider.** When you enable an AI provider and send privacy-policy text to it, that text leaves your machine. We hash policies and skip re-summarisation when the hash is unchanged, but the content of policies is still visible to whichever provider you chose.
-- **Volumetric DoS or brute-force against a self-hosted instance.** privacytracker has no rate limit of its own. If you expose it to the public internet, put it behind a rate-limiting reverse proxy.
+- **Volumetric DoS from many source IPs.** privacytracker does rate-limit its own routes ([Rate limiting](#rate-limiting)), but that limiter is defence-in-depth: the thresholds are modest, and unless you set `PRIVACYTRACKER_TRUST_PROXY` every caller lands in one shared bucket per route. It will not absorb a distributed flood. If you expose the instance to the public internet, put it behind a rate-limiting reverse proxy.
 - **Multi-user separation.** There are no user accounts. Anyone with browser access to your instance has full access to its data.
 - **Physical attacks against your machine.** Out of scope.
 
 ## What data leaves your device
 
-Three things, all opt-in or transparent:
+Four things, all opt-in or transparent:
 
 <AccordionGroup>
   <Accordion title="App Store HTML — fetched from apps.apple.com" icon="apple">
@@ -54,32 +56,52 @@ Three things, all opt-in or transparent:
 
     Local providers (Ollama, llama.cpp, LM Studio, vLLM) keep all of this on your machine.
   </Accordion>
+  <Accordion title="Notification webhooks — only when you configure a URL" icon="bell">
+    If you paste an incoming-webhook URL into the desktop app's *Keep privacytracker running in the background* wizard (or write `notification_webhook_url` through `POST /api/settings` on any build), privacytracker POSTs notifications to that URL. Off by default — an empty URL, or `notification_webhook_frequency = off`, disables it entirely.
+
+    The receiving service sees **app names and change summaries** — e.g. *"Instagram: 2 new categories under Data Used to Track You"*. It does not see your annotations, privacy profile, AI keys, or the underlying policy text. Four payload shapes are supported (`slack`, `discord`, `teams`, `generic`); `generic` additionally carries the structured rows under `notifications`.
+
+    Delivery is either immediate (on each new notification) or a daily/weekly batch posted from the 30-minute tick. Requests go out through the same `safeFetch` SSRF, size, and timeout guards as `/api/scrape`. Since this is a third-party chat service, treat it as you would any other outbound integration: pick a private channel.
+  </Accordion>
 </AccordionGroup>
 
-privacytracker has **no analytics, no telemetry, no crash reporting** of its own. The SQLite database, all settings, all your annotations — everything stays on your machine.
+privacytracker has **no analytics, no telemetry, no crash reporting** of its own. Beyond the four paths above, the SQLite database, all settings, all your annotations stay on your machine.
 
 ## Authentication & access control
 
-Two layers, applied to *destructive* routes only. Read-only endpoints have neither.
+Three layers. The host allowlist applies to every request; the CSRF check applies to mutations; the admin token applies to mutations and — on a network-exposed instance — to a short list of sensitive reads too.
+
+### Host allowlist (always on)
+
+Before anything else, `proxy.ts` rejects any request — `GET` included — whose effective `Host` isn't allowlisted:
+
+```bash
+curl -H "Host: evil.example" http://localhost:3000/api/apps
+# 400 { "error": "Host not allowed" }
+```
+
+The default allowlist is loopback only. Add LAN hostnames with `PRIVACYTRACKER_ALLOWED_HOSTS` — see [Configuration → Network exposure](/configuration#network-exposure). This is the DNS-rebinding defence: browsers can't spoof `Host`, so a page that rebinds DNS to your loopback instance still arrives under its own hostname and is bounced.
 
 ### Same-origin CSRF check (always on)
 
-Every mutating verb (`POST`, `PUT`, `PATCH`, `DELETE`) checks that the `Origin` header matches the request host. The check lives in `proxy.ts` and runs before any route handler.
+Every mutating verb (`POST`, `PUT`, `PATCH`, `DELETE`) on `/api/` checks that the `Origin` header matches the request host, unless the caller supplies the admin token instead. The check lives in `proxy.ts` and runs before any route handler.
 
 ```bash
 curl -X POST http://localhost:3000/api/reset
-# 403 { "error": "origin_mismatch" }
+# 403 { "error": "Cross-origin mutation rejected" }
 
 curl -X POST http://localhost:3000/api/reset \
   -H "Origin: http://localhost:3000"
 # 200
 ```
 
+The body is human-readable prose, not a stable machine code — match on the status, not the string.
+
 Browser requests from your installed UI satisfy this automatically. Cross-origin or curl-from-a-different-host calls won't unless they set the header explicitly. If you're behind a reverse proxy, the proxy must forward the original `Host` header — see [Troubleshooting → Reverse-proxy CSRF rejection](/troubleshooting#reverse-proxy-csrf-rejection).
 
 ### Admin token (optional, opt-in)
 
-When you set `AUDITOR_ADMIN_TOKEN` in the environment, *destructive* routes (`POST /api/reset`, `DELETE /api/apps`, `POST /api/settings`, `DELETE /api/wayback/import-all`, etc.) require an `X-Auditor-Admin-Token` header on top of the CSRF check.
+When you set `AUDITOR_ADMIN_TOKEN` in the environment, *destructive* routes (`POST /api/reset`, `DELETE /api/apps`, `POST /api/settings`, `DELETE /api/wayback/import-all`, etc.) require the token on top of the CSRF check. Calls without it get **401** `{ "error": "Admin token required" }`.
 
 ```bash
 export AUDITOR_ADMIN_TOKEN=$(openssl rand -hex 32)
@@ -98,37 +120,96 @@ The token is purely opt-in — there's no built-in user/account system in privac
   Generate a token with `openssl rand -hex 32`. Store it like any other secret — never commit it, never paste it into a public log.
 </Tip>
 
+#### Sensitive reads are gated too
+
+Once the instance is network-exposed — any non-loopback entry in `PRIVACYTRACKER_ALLOWED_HOSTS`, `PRIVACYTRACKER_NETWORK_EXPOSED` set, or a specific non-loopback `PRIVACYTRACKER_BIND_HOST` — the token is also required on `GET` requests whose path starts with any of:
+
+```
+/api/ai/debug-log
+/api/backup/
+/api/deployment/
+/api/desktop/diagnostics
+/api/diagnostics/
+/api/export
+/api/import/
+```
+
+Missing or wrong token gets 401 `{ "error": "Admin token required for non-local API access" }`. This proxy gate never fires on a loopback-only install — but it isn't the only gate. `GET /api/backup/export` and `GET /api/ai/debug-log` check `adminTokenRequiredForRequest()` themselves, which is `adminTokenConfigured() || isNetworkExposed()` (`lib/security.ts`), so they return 401 `{ "error": "Admin token required" }` as soon as `AUDITOR_ADMIN_TOKEN` is set, loopback or not. This is why "read-only means unauthenticated" doesn't hold for the LAN deployments the token exists for.
+
+#### Browser sessions use a cookie, not the header
+
+The Settings panel can't put a long-lived secret in JavaScript, so it exchanges the token once and works from a cookie afterwards:
+
+| Endpoint | Does |
+|---|---|
+| `POST /api/auth/admin-token/login` | Takes `{ "token": "..." }`, constant-time compares, sets `pt_admin_token` — HttpOnly, `SameSite=strict`, `Secure` over HTTPS, 8-hour max-age. |
+| `POST /api/auth/admin-token/logout` | Clears the cookie server-side (JS can't, it's HttpOnly). |
+| `GET /api/auth/admin-token/status` | Returns `{ configured, unlocked }`. Never returns the token. |
+
+All three are exempt from the non-local admin gate (`ADMIN_AUTH_BYPASS_PREFIX` in `proxy.ts`) — the login endpoint is how you obtain the cookie in the first place, so gating it would be circular. Same-origin is the narrower claim: login and logout call `isSameOriginRequest()` themselves, but `GET .../status` doesn't, and the proxy's CSRF check only covers `POST`/`PUT`/`PATCH`/`DELETE` — so a cross-origin `GET` reaches that handler. What it gets back is two booleans; the token itself is never returned. `proxy.ts` treats the cookie and the `X-Auditor-Admin-Token` header as equivalent everywhere else.
+
+Keeping the token out of `sessionStorage` is the point: an injected script can't read an HttpOnly cookie, so an XSS bug can't exfiltrate the token and replay it later from somewhere else.
+
+### Rate limiting
+
+privacytracker rate-limits its own routes. `checkRateLimit()` in `lib/security.ts` is a per-key sliding window, keyed on route prefix plus client IP, applied to 56 of the 110 API routes — 33 calling it directly, 23 more through `requireMutationGuard()`, which also writes a `<action>.rate_limited` audit row. Every denial is a 429, but only some carry `Retry-After`: `requireMutationGuard()` always sets it (`lib/api-guards.ts`), as do a handful of direct callers such as `/api/scrape`, `/api/search`, and the admin-token login. Most routes that call `checkRateLimit()` directly — `/api/settings`, `/api/reset`, `/api/backup/export`, `/api/backup/restore`, `/api/shortlist`, the `/api/manual-apps` family — return a bare 429 with just the error body, so a client that backs off on the header needs a fallback for those. None of it is behind an env var or build mode.
+
+| Route | Limit |
+|---|---|
+| `POST /api/scrape` | 30 / minute |
+| `POST /api/search` | 60 / minute |
+| `POST /api/reset` | 30 / 10 minutes |
+| `POST /api/backup/restore` | 3 / 10 minutes |
+| `POST /api/auth/admin-token/login` | 5 / minute |
+| Failed admin-token logins, all sources | 100 / 15 minutes |
+
+Read the boundary carefully. Without `PRIVACYTRACKER_TRUST_PROXY`, `X-Forwarded-For` is attacker-controlled and deliberately ignored, so the IP part of every key collapses to the constant `local` — one shared bucket per route rather than one per caller. That's what the last row is for: an absolute, IP-independent backstop on failed logins, counting failures only, so an attacker who trips it inflicts a self-healing cooldown rather than locking you out.
+
+The practical consequence: these limits stop a runaway client loop and make token brute-force impractical. They are not a substitute for a rate-limiting reverse proxy in front of an internet-facing instance.
+
+<Note>
+  A 429 from privacytracker is not the same thing as a 429 from Apple. The internal limiter logs its denials with the marker `This is our INTERNAL limiter (lib/security.ts), not Apple's 429 cooldown.` and clears within its own window; Apple's cooldown is longer and shows up as `partial: rateLimited` in the sync runner.
+</Note>
+
 ### Audit log
 
 Every failed admin-token attempt (and a handful of other security-relevant events) is appended to the `audit_log` table:
 
 | Column | Contents |
 |---|---|
-| `id` | autoincrement |
-| `at` | Unix timestamp (ms) |
-| `event` | event code (`admin_token_failed`, `admin_token_succeeded`, `reset_invoked`, `bundle_restored`, `bundle_exported`, etc.) |
-| `ip` | requester IP (from `x-forwarded-for` if behind a proxy, else direct) |
-| `user_agent` | the `User-Agent` header verbatim |
-| `details` | JSON blob with route + non-sensitive context |
+| `id` | UUID (`crypto.randomUUID()`), TEXT primary key — not an autoincrement integer |
+| `created_at` | Unix timestamp (ms) |
+| `action` | dot-namespaced action code — `admin_token.login`, `admin_token.login.invalid`, `reset.success`, `backup.export.success`, `app.delete.success`, … |
+| `actor_ip` | requester IP — from `x-forwarded-for` only when `PRIVACYTRACKER_TRUST_PROXY` is set, otherwise the literal `local` |
+| `user_agent` | the `User-Agent` header, truncated to 256 chars |
+| `detail` | free-text context, truncated to 1024 chars |
+| `success` | `1` or `0` |
 
-The table is **append-only** by convention — no API route writes a `DELETE` against it, and the schema has no `deleted_at` column. If you want to prune it for storage, drop and recreate manually with the app stopped.
+Action codes are namespaced by facility, then outcome. A failed admin-token login is `admin_token.login.invalid` (with `admin_token.login.rate_limited` and `admin_token.login.global_throttled` for the two throttle paths); a successful one is `admin_token.login`. A reset is `reset.success`, `reset.unauthorised`, `reset.rate_limited`, or `reset.failed`. Bundle export is `backup.export.success`; restore is `backup.restore.*`.
 
-Review it from the UI under **Settings → Diagnostics → Audit log**, or directly:
+Rows are only ever appended — the schema has no `deleted_at` column and nothing deletes or rewrites an individual entry. The table as a whole is not protected, though: `audit_log` is listed in `START_OVER_TABLES_TO_TRUNCATE` (`lib/reset-tables.ts`), so `POST /api/admin/start-over` runs `DELETE FROM audit_log`, and `POST /api/backup/restore` clears it too before replacing it with whatever the bundle carried (`TABLES_IN_INSERT_ORDER` in `lib/backup.ts`). `POST /api/reset` is the destructive route that deliberately preserves it. Both wipe paths need the admin token — which means an actor who has the token can erase the record of their own access, so copy the log off-host if you need it to survive that. If you want to prune it for storage, drop and recreate manually with the app stopped.
+
+There is no audit-log UI. Nothing in the app reads this table — no route SELECTs from it, and there's no Settings panel for it. It's a forensic trail, not a screen. Read it with the sqlite3 CLI:
 
 ```bash
-sqlite3 data/privacy.db "SELECT datetime(at/1000, 'unixepoch'), event, ip FROM audit_log ORDER BY at DESC LIMIT 50;"
+sqlite3 data/privacy.db "SELECT datetime(created_at/1000, 'unixepoch'), action, actor_ip, success FROM audit_log ORDER BY created_at DESC LIMIT 50;"
 ```
+
+The separate `activity_log` table — scrapes, re-syncs, scheduled runs, migrations, backup/restore — *is* surfaced in the UI, under **Settings → Admin → Developer Options → Activity log**. Don't confuse the two: `activity_log` is the operational timeline, `audit_log` is the privileged-request trail.
 
 ## Cryptographic primitives
 
 | Use | Primitive | Where |
 |---|---|---|
-| Admin-token verification | `crypto.timingSafeEqual` (Node native) | `proxy.ts` |
+| Admin-token verification | `crypto.timingSafeEqual` (Node native) | `proxy.ts`, `lib/security.ts` |
 | Privacy-policy version hashing | SHA-256 | `lib/privacy-policy.ts` |
 | Desktop-app auto-update verification | ed25519 signature on every patch | Tauri updater |
-| Backup-bundle integrity | none today (versioned JSON only) | `lib/audit-bundle.ts` |
+| Backup-bundle authenticity | HMAC-SHA256 over the canonicalised envelope, verified in constant time | `lib/backup.ts` |
+| Audit-bundle integrity | none today (versioned JSON only) | `lib/audit-bundle.ts` |
 
-Backup bundles are intentionally unencrypted JSON so they're inspectable and recoverable without tooling. Treat them as sensitive data and share via channels you'd use for any other personal file — see [Audit-bundle export threat model](#audit-bundle-export-threat-model) below.
+Backup bundles are signed, not encrypted. The key is 32 random bytes at `<data dir>/backup-signing.key`, mode `0600`, generated on first use and never leaving the machine — so a signature proves *"this bundle came from this install"*, nothing more. A bundle exported anywhere else fails verification and needs the explicit untrusted opt-in to restore; see [Backup & restore](/backup-and-restore#restoring-a-bundle-from-another-install). Anyone who can read that key file can forge envelopes targeting your install.
+
+Both bundle kinds are unencrypted JSON so they're inspectable and recoverable without tooling. Treat them as sensitive data and share via channels you'd use for any other personal file — see [Audit-bundle export threat model](#audit-bundle-export-threat-model) below.
 
 ## Verifying signed binaries
 
@@ -150,7 +231,9 @@ To verify the build matches source, [build from source](/develop/build-from-sour
 
 ## Audit-bundle export threat model
 
-The `audience: loved_one` workflow lets users export an audit bundle — a JSON file describing tracked apps, their privacy labels, AI summaries, and exportable annotations. Bundles can also include the privacy profile you assessed against, with an opt-out checkbox in the export dialog.
+An audit bundle is a JSON file describing tracked apps, their privacy labels, AI summaries, and exportable annotations. Bundles can also include the privacy profile you assessed against, with an opt-out checkbox in the export dialog.
+
+`POST /api/export/audit-bundle` allows the export when the `flag.settings.admin.export.audit_bundle` flag resolves to `on`, **or** when your focus workflow (`flag.focus.workflow`) is `other_handoff` — the "I'm preparing a bundle for someone else" answer. Either arm is sufficient, and the first one is what a recommender trips: `AUDIENCE_RULES.loved_one` in `lib/feature-flag-rules.ts` sets that flag to `on`, so picking the **Loved one** audience unlocks the export by itself, with the workflow still sitting at `custom`. For `self` and `guardian` the hard default is `off`, and those audiences need the `other_handoff` answer or an explicit flag override before the route stops returning 403. The API is the authoritative gate; client surfaces just hide the button.
 
 **What's included** (when you click Export):
 

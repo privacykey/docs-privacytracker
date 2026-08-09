@@ -43,19 +43,21 @@ A short reference for terms that show up across the app, the API, and the codeba
 
 **Policy version.** A captured version of a developer's privacy policy (URL, fetched text, SHA-256 hash, AI summary if generated). Stored in `policy_versions`. Re-summarisation only runs when the hash changes.
 
-**Lens.** One topic area an AI summary covers — `collection_scope`, `ads_marketing`, `third_party_sharing`, `retention`, `user_rights`, `children`, `security`, `disclosure`. Defined in `POLICY_TOPIC_GUIDES` in `lib/privacy-policy.ts`.
+**Lens.** One topic area an AI summary covers. Eight of them, in this order: `collection_scope`, `product_use`, `ads_marketing`, `third_party_sharing`, `tracking_analytics`, `user_controls`, `data_retention`, `children_minors`. Defined in `POLICY_LENSES` in `lib/policy-summary-meta.ts`; the per-lens prompt guidance lives in `POLICY_TOPIC_GUIDES` in `lib/privacy-policy.ts`. Summaries are rebuilt against that list, and keys outside it are discarded — so `summary_json` and the API only ever carry these eight.
 
 **Chunking.** Splitting a long policy into ~12 KB pieces for small/local models. Triggered by the `providerLikelyNeedsChunking` flag in `lib/ai-config.ts`. Per-lens prompts are generated against each chunk and merged.
 
-**AI debug log.** Append-only diagnostic table showing every AI call's provider, model, prompt size, response status, and timing. Inspectable from **Settings → AI → Debug log** or `GET /api/ai/debug-log`.
+**AI debug log.** Append-only diagnostic table showing every AI call's provider, model, prompt size, response status, and timing. Off unless *Record AI prompts and responses* is enabled. Inspectable from **Settings → Admin → Developer Options** or `GET /api/ai/debug-log`.
 
 ## Focus and feature flags
 
-**Focus.** The user's combined choice of *audience* and *goals*. Drives every default in the feature-flag resolver. Stored as four `app_settings` rows: `flag.focus.audience` plus three `flag.focus.goal.*` booleans.
+**Focus.** The user's combined choice of *audience* and *goals*. Drives every default in the feature-flag resolver. Stored as seven `app_settings` rows: `flag.focus.audience`, four `flag.focus.goal.*` booleans, `flag.focus.workflow`, and `flag.focus.updated_at`.
 
 **Audience.** One of `self`, `loved_one`, `guardian`. Determines moderate-weight defaults across the resolver.
 
-**Goal.** Mutually exclusive primary goal (`understand`, `declutter`, `minimal`) plus an optional `accessibility` modifier. The modifier combines with whichever primary goal is active.
+**Goal.** Mutually exclusive primary goal (`monitor`, `cleanup`, `minimal`) plus an optional `accessibility` modifier. The modifier combines with whichever primary goal is active. `monitor` and `cleanup` were formerly called `understand` and `declutter`; the boot migration moves the old `app_settings` rows onto the new keys.
+
+**Workflow.** The sixth of those rows, `flag.focus.workflow` — one of `self_monitor`, `self_cleanup`, `other_handoff`, `other_monitor`, `custom`. Inferred from audience + goals where that's unambiguous, `custom` otherwise. Defined in `lib/focus-workflow.ts`; its one behavioural effect today is that `other_handoff` opens audit-bundle export — one of the two ways that gate can be satisfied.
 
 **Hard default.** The value a flag falls back to before any rules apply. Defined in `HARD_DEFAULTS` in `lib/feature-flag-rules.ts`. The kill-switch (`flag.devopts.feature_flag_system.enabled = off`) collapses every flag to its hard default.
 
@@ -79,9 +81,9 @@ A short reference for terms that show up across the app, the API, and the codeba
 
 **Annotation.** A freeform per-app note. Supports markdown, soft-delete with 30-second undo, tags (`concern` / `positive` / `follow_up` / `other`), and per-note visibility (`export` / `private`). Stored in `annotations`.
 
-**Verdict.** A structured per-app judgement — `tracking_concern`, `acceptable`, `do_not_install`, plus an optional reason. Stored in `verdicts`. Distinct from annotations because verdicts are categorical and exportable in the audit bundle.
+**Verdict.** A structured per-app judgement — `safe`, `replace`, or `uninstall`, plus an optional `rationale`. Stored in `app_verdicts`, with a `CHECK` constraint on the three values. Distinct from annotations because verdicts are categorical and exportable in the audit bundle.
 
-**Audit bundle.** A versioned export of apps, labels, AI summaries, and exportable annotations + verdicts, suitable for sharing with a household member or a regulator. Available to the `audience: loved_one` workflow. Private notes (`visibility = 'private'`) are unconditionally excluded by SQL filter — there is no force-include path.
+**Audit bundle.** A versioned export of apps, labels, AI summaries, and exportable annotations + verdicts, suitable for sharing with a household member or a regulator. `POST /api/export/audit-bundle` allows it when the `flag.settings.admin.export.audit_bundle` flag resolves to `on`, or when `flag.focus.workflow` is `other_handoff`. The `loved_one` audience rule sets that flag to `on`, so picking that audience satisfies the first arm on its own; `self` and `guardian` need the `other_handoff` workflow or an explicit override. Private notes (`visibility = 'private'`) are unconditionally excluded by SQL filter — there is no force-include path.
 
 **Shortlist.** A user-curated set of apps you want to keep an eye on without installing. Separate from tracked apps; you can shortlist an app you've never installed.
 
@@ -93,4 +95,4 @@ A short reference for terms that show up across the app, the API, and the codeba
 
 **Standalone build.** The output of `npm run build:standalone` (with `BUILD_STANDALONE=1` set). Self-contained Next.js bundle suitable for the sidecar or any external runtime.
 
-**Admin token.** Optional shared secret (`AUDITOR_ADMIN_TOKEN`) that gates destructive routes when set. Verified with `crypto.timingSafeEqual`. Failed attempts log to `audit_log` with IP + user agent.
+**Admin token.** Optional shared secret (`AUDITOR_ADMIN_TOKEN`) that gates destructive routes when set, plus a list of sensitive read prefixes once the instance is network-exposed. Sent as the `X-Auditor-Admin-Token` header or the `pt_admin_token` cookie. Verified with `crypto.timingSafeEqual`. Failed attempts log to `audit_log` as `admin_token.login.invalid`.

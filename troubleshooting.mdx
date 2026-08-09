@@ -3,7 +3,7 @@ title: Troubleshooting
 description: "Common issues self-hosters hit, with diagnostics and fixes."
 ---
 
-If you don't see your problem here, the support bundle has more context: <kbd>Settings → Diagnostics → Copy support bundle</kbd>. Paste it into a [GitHub issue](https://github.com/privacykey/privacytracker/issues).
+If you don't see your problem here, the support bundle has more context: <kbd>Settings → Admin → Deployment Diagnostics → Copy support bundle</kbd>. Paste it into a [GitHub issue](https://github.com/privacykey/privacytracker/issues).
 
 ## App Store labels stopped parsing
 
@@ -70,21 +70,22 @@ docker compose up --build -d
 
 If you're running on SELinux (e.g. Fedora), add `:Z` to the volume mount in `docker-compose.yml` so the host directory gets the right context.
 
-## `/api/ready` returns `{"ok":false}`
+## `/api/ready` returns `not_ready`
 
 **Diagnose:**
 
 ```bash
-curl http://localhost:3000/api/ready
-# {"ok":false,"db":"unreachable","data":"writable"}
+curl -i http://localhost:3000/api/ready
+# HTTP/1.1 503 Service Unavailable
+# {"status":"not_ready","checks":{...}}
 ```
 
-Two things are checked: SQLite reachability and `data/` writability. The error tells you which failed.
+A ready instance answers 200 with `{"status":"ready"}`. Two things are checked: SQLite reachability and data-directory writability. The `checks` object names which failed.
 
 | Failure | Meaning | Fix |
 |---|---|---|
-| `db: unreachable` | The process can't open `data/privacy.db` | Check `data/privacy.db.lock` isn't held by a stale process; `chmod 644 data/privacy.db`; on Docker, confirm the volume mounted (`docker compose exec app ls -la /app/data`) |
-| `data: not writable` | The data directory itself isn't writable | `chmod 755 data`; on Docker, confirm the volume isn't mounted read-only |
+| Database unreachable | The process can't open `privacy.db` | Check no stale process holds the file; `chmod 644 data/privacy.db`; on Docker, confirm the volume mounted (`docker compose exec app ls -la /app/data`) |
+| Data directory not writable | The data directory itself isn't writable | `chmod 755 data`; on Docker, confirm the volume isn't mounted read-only |
 
 If you've been running with WAL mode (the default) and recently force-killed the process, you may have a stale `-wal` or `-shm` file. They're safe to delete with the app stopped.
 
@@ -92,7 +93,7 @@ If you've been running with WAL mode (the default) and recently force-killed the
 
 **Symptoms:** AI provider is configured, the test in **Settings → AI → Test connection** passes, but summaries on app detail pages stay empty.
 
-**Diagnose:** Open **Settings → AI → Debug log**. Recent calls show provider, model, prompt size (chars), response status, and timing.
+**Diagnose:** Turn on *Record AI prompts and responses*, then open the AI debug log under **Settings → Admin → Developer Options**. Recent calls show provider, model, prompt size (chars), response status, and timing.
 
 | Symptom in the log | Cause | Fix |
 |---|---|---|
@@ -106,7 +107,7 @@ For local models, the `providerLikelyNeedsChunking` flag automatically splits do
 
 ## Reverse-proxy CSRF rejection
 
-**Symptoms:** Self-hosted behind Caddy/Traefik/Nginx; reads work but every mutation (`POST`, `PUT`, `DELETE`) returns 403 with `{"error":"origin_mismatch"}`.
+**Symptoms:** Self-hosted behind Caddy/Traefik/Nginx; reads work but every mutation (`POST`, `PUT`, `DELETE`) returns 403 with `{"error":"Cross-origin mutation rejected"}`.
 
 **Cause:** privacytracker enforces a same-origin CSRF check on every destructive route by comparing `Origin` against `Host`. If your proxy rewrites either header, the check fails.
 
@@ -125,7 +126,9 @@ Sample Traefik label:
 - "traefik.http.middlewares.privacytracker-headers.headers.customRequestHeaders.Host=privacytracker.local"
 ```
 
-Full samples are on the [privacytracker Plane board](https://sites.plane.so/issues/39b6604351894f09a5e903acce37d265).
+Complete Compose stacks ship in the main repo under `deploy/caddy/` and `deploy/traefik/` — start from those if you have a checkout.
+
+**If reads fail too,** with 400 `{"error":"Host not allowed"}`, this is a different check: the Host allowlist, which defaults to loopback only. Add your proxy's hostname to `PRIVACYTRACKER_ALLOWED_HOSTS` — see [Configuration → Network exposure](/configuration#network-exposure).
 
 ## Wayback import: "skipped, no capture"
 
@@ -141,13 +144,14 @@ Full samples are on the [privacytracker Plane board](https://sites.plane.so/issu
 
 **Symptoms:** App boots into an error screen reading "Migration step `<name>` failed: …" with an Attempt counter and a Try again button.
 
-**Diagnose:** The error message names the failing step. The five steps run in order and each is idempotent:
+**Diagnose:** The error message names the failing step. The six steps run in order and each is idempotent:
 
-1. `schema` — `CREATE TABLE` for `feature_flag_overrides`
-2. `user_intent_to_focus` — map old `user_intent` to new focus keys
+1. `schema_check` — verify `feature_flag_overrides` and the other new tables exist
+2. `user_intent_migration` — map old `user_intent` to new focus keys
 3. `notification_prefs_absorb` — flatten the old JSON blob into per-type rows
 4. `callout_rename` — drop stale override rows for renamed keys
 5. `quarantine_check` — flag overrides whose keys are unknown to this version
+6. `focus_goal_rename` — move `flag.focus.goal.understand` / `.declutter` onto `.monitor` / `.cleanup`
 
 **Fix:** Tap **Try again** — most failures are transient (file lock, slow disk). Up to 3 retries are offered; after that, the screen surfaces a **Reset DB** option that wipes `data/privacy.db` and routes you to onboarding. Take a backup first if you have anything you don't want to lose:
 
@@ -166,7 +170,7 @@ cp data/privacy.db data/privacy.db.before-reset
 1. **Reset one flag.** In **Settings → Developer Options → Feature flags**, find the flag and clear its override. It falls back to the computed default for your current focus.
 2. **Flip the kill-switch.** If several flags are tangled, set `flag.devopts.feature_flag_system.enabled` to **off** on the same Developer Options screen. This collapses *every* flag to its hard default without touching your focus, apps, or notes. Turning it back **on** re-engages your audience/goals and any overrides — no data is lost either way.
 
-If the layout is still wrong after the kill-switch, it isn't a flag problem — grab the support bundle (**Settings → Diagnostics**) and open an issue.
+If the layout is still wrong after the kill-switch, it isn't a flag problem — grab the support bundle (**Settings → Admin → Deployment Diagnostics**) and open an issue.
 
 ## Sync stuck "running"
 
@@ -202,9 +206,11 @@ Then restart. This is safe — the worst case is one app's worth of duplicate wo
 
 **Cause:** Apple rate-limited the IP. The runner is tuned to bail cleanly on the first 429, record a `partial` activity row, and clear state + mutex so the next 30-minute scheduler tick can retry fresh.
 
-**Fix:** Wait 30+ minutes and the scheduled tick will retry automatically. If you hit 429 repeatedly, reduce sync frequency in **Settings → Sync** (e.g., daily instead of every 30 minutes) or stagger your apps across multiple runs.
+**Fix:** Wait 30+ minutes and the scheduled tick will retry automatically. If you hit 429 repeatedly, switch **Settings → Sync → Schedule** from `daily` to `weekly`, or stagger your apps across multiple manual runs. `daily` is the fastest cadence there is — the 30-minute figure is the ticker interval, not a schedule option.
+
+If the 429s keep coming, set the schedule to `manual`. A rate-limited exit deliberately doesn't stamp `last_auto_sync`, so the run stays "due" and the ticker retries every 30 minutes regardless of whether you picked `daily` or `weekly`. Only `manual` stops that loop.
 
 ## Where to ask for help
 
-- **GitHub Issues:** [github.com/privacykey/privacytracker/issues](https://github.com/privacykey/privacytracker/issues) — bug reports and feature requests use the `bug_report.yml` template and benefit from a copied support bundle (**Settings → Diagnostics**)
+- **GitHub Issues:** [github.com/privacykey/privacytracker/issues](https://github.com/privacykey/privacytracker/issues) — bug reports and feature requests use the `bug_report.yml` template and benefit from a copied support bundle (**Settings → Admin → Deployment Diagnostics**)
 - **Security:** [GitHub Private Vulnerability Reporting](https://github.com/privacykey/privacytracker/security/advisories/new) — never open a public issue for a security finding
