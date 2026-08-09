@@ -1,0 +1,125 @@
+---
+title: Devices
+description: "Tracking apps across more than one iPhone or iPad — re-sync, orphan handling, and the Apple Configurator actions."
+---
+
+Most people track one phone. If you track more than one — your own plus a
+partner's, or a couple of the kids' — privacytracker keeps a row per device and
+remembers which apps came from where.
+
+Devices are created by the **import** flow, not by hand. Whenever you import an
+app list, privacytracker either matches an existing device or creates a new one.
+Imports that carry an **ECID** (the Apple Configurator export, or the Python
+helper reading a connected device) match on that identifier, so re-importing the
+same phone updates the existing row rather than duplicating it. Imports without
+one — screenshots, a pasted list — land against a placeholder device you can
+rename once you know which phone they came from.
+
+<Note>
+  The Devices page is gated behind `flag.settings.devices_page`. If
+  **Settings → Devices** isn't in your sidebar, that flag is off for your
+  current focus — see [Feature flags](/develop/feature-flags).
+</Note>
+
+## The Devices page
+
+**Settings → Devices** (`/dashboard/settings/devices`) lists one row per device
+with its app count. Each row can be renamed, deleted, or re-synced.
+
+Per device, privacytracker stores a name, the ECID if it has one, the model,
+device class and iOS version reported at import, when it was created, and when
+it last synced.
+
+Elsewhere in the app, an app's detail page shows a **Tracked on** row of device
+chips, and an "Installed on *N* devices" panel that links back here.
+
+## Re-syncing a device
+
+Re-sync answers "what's changed on this phone since last time". It runs in two
+phases, deliberately — nothing is written until you confirm.
+
+<Steps>
+  <Step title="Preview">
+    `POST /api/device-sync/preview` diffs the incoming app list against the set
+    currently linked to that device and returns `adds`, `removes` and
+    `unchanged`. Matching is keyed on App Store track ID; resolving bundle IDs
+    or names to a track ID is the importer's job, done before this point.
+  </Step>
+  <Step title="Confirm">
+    You tick the subset you actually want applied. `POST /api/device-sync/commit`
+    writes it in a single transaction.
+  </Step>
+</Steps>
+
+### Orphans
+
+An app can be linked to several devices. Removing it from one device usually
+just drops that link.
+
+But if the app isn't on any *other* device, removing it here untracks it
+**entirely** — you lose its history along with it. Every row in the `removes`
+list is flagged with `wouldOrphan` for exactly this reason, and the UI warns you
+before you commit. The same sweep runs when you delete a whole device.
+
+<Warning>
+  Deleting a device untracks every app that existed only on it. The confirmation
+  dialog tells you how many apps that is. There is no undo — restore from a
+  [backup](/backup-and-restore) if you delete the wrong one.
+</Warning>
+
+After a successful re-sync you'll see a summary: how many apps were added,
+removed, untracked entirely, and how many duplicate device rows were collapsed.
+
+## Device actions
+
+On the desktop build, privacytracker can drive Apple Configurator's `cfgutil`
+against a connected device to **back it up** or **uninstall an app**.
+
+The subprocess runs on the Tauri side, behind a Touch ID prompt. The server
+never executes the command — the API routes exist to check whether the action is
+permitted and to write the audit record.
+
+### What has to be true first
+
+Uninstall is guarded three ways, and all three must pass:
+
+| Gate | Requirement |
+|---|---|
+| Audience | Your active focus must be **self**. Loved-one and guardian audiences can build an uninstall list but cannot execute it. |
+| Flag | `flag.devopts.cfgutil_uninstall` must be `on`. It is **off by default**. |
+| Backup freshness | A successful backup of that device within the last 24 hours. Per-call opt-out exists, but the audience and flag gates do not bend. |
+
+The audience gate is the important one. It means privacytracker will not let
+someone in guardian mode remotely remove apps from the device they're
+supervising — the tool reports, it doesn't reach across and act.
+
+### The audit trail
+
+Every attempt writes an activity row — `cfgutil_backup` or `cfgutil_uninstall` —
+whether or not it succeeded. Those rows are visible in the Developer Options
+activity log and travel with your [audit bundle](/backup-and-restore).
+
+## API reference
+
+| Endpoint | Methods | Purpose |
+|---|---|---|
+| `/api/devices` | `GET`, `POST` | List devices; create one |
+| `/api/devices/{id}` | `GET`, `PATCH`, `DELETE` | Fetch, rename, delete |
+| `/api/devices/{id}/bundles` | `GET` | Bundle IDs seen on this device |
+| `/api/devices/{id}/tracked-apps` | `GET` | Apps currently linked to it |
+| `/api/devices/for-app/{appId}` | `GET` | Which devices an app sits on |
+| `/api/device-sync/preview` | `POST` | Diff without writing |
+| `/api/device-sync/commit` | `POST` | Apply the ticked subset |
+| `/api/device-actions/backup` | `POST` | Record a completed `cfgutil` backup |
+| `/api/device-actions/uninstall` | `GET`, `POST` | Check the gates; record the attempt |
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Getting apps in" icon="mobile" href="/quickstart">
+    The four import routes, and which ones carry an ECID.
+  </Card>
+  <Card title="Backup & restore" icon="database" href="/backup-and-restore">
+    What a backup contains, and how to undo a bad delete.
+  </Card>
+</CardGroup>

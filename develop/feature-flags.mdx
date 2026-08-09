@@ -7,9 +7,11 @@ Every user-facing surface in privacytracker is gated by the **focus system**: a 
 
 This page is the ergonomic summary. The full inventory and rollout reasoning live on the [privacytracker Plane board](https://sites.plane.so/issues/39b6604351894f09a5e903acce37d265).
 
-## The five-module split
+## The module split
 
 Next 16 will refuse to build if these get tangled. Don't break the layering.
+
+The five modules that carry the resolver:
 
 | Module | Role | Constraint |
 |---|---|---|
@@ -18,6 +20,14 @@ Next 16 will refuse to build if these get tangled. Don't break the layering.
 | `lib/feature-flags-hooks.ts` | `useFlag`, `useFocus` via `useSyncExternalStore` | `'use client'` only. Importing this from a Server Component fails the build. |
 | `lib/feature-flags-server.ts` | `getResolverContextFromDb`, `resolveFlagFromDb` | `'server-only'`. |
 | `lib/feature-flag-storage.ts` | SQLite reads/writes via better-sqlite3 | All synchronous. |
+
+Plus two that exist only to make the Developer Options panel legible. Neither
+affects resolution — nothing in the app branches on them:
+
+| Module | Role |
+|---|---|
+| `lib/feature-flag-usage.ts` | Curated map of where each flag lives in the codebase and which route shows its effect. Powers the panel's hover-preview and its "Show me where" link. Deliberately partial — unlisted flags fall through to "no preview available". |
+| `lib/feature-flag-wired.ts` | The set of flags actually consumed by component code today. The panel badges everything outside it "(no effect yet)", so a tester can tell a live toggle from an inert one. |
 
 ## Flag-key convention
 

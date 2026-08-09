@@ -124,7 +124,7 @@ If a signature ever fails to verify, Tauri:
 3. Surfaces a notification to the user.
 4. Does not retry the same patch.
 
-For Tier 3 (public-internet) deploys, you can disable auto-updates entirely with `AUDITOR_DISABLE_AUTO_UPDATE=1` — see [Hardening → Disable inbound auto-update on Tier 3](/hardening#disable-inbound-auto-update-on-tier-3).
+The updater has no opt-out switch — the plugin is registered unconditionally in `src-tauri/src/main.rs` and `plugins.updater.active` is `true`. For Tier 3 (public-internet) deploys that need deterministic update timing, see [Hardening → Disable inbound auto-update on Tier 3](/hardening#disable-inbound-auto-update-on-tier-3) for the workarounds that actually exist.
 
 ## Filesystem layout on disk
 

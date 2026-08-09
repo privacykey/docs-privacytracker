@@ -1,6 +1,6 @@
 # Contributing to the privacytracker docs
 
-Thanks for helping make the docs better. This file is for **contributing to the docs site itself**. If you're looking for how to contribute to the privacytracker app, see [Contributing](https://docs.privacytracker.io/develop/contributing) inside the docs (or `develop/contributing.mdx` in this repo if you're previewing locally) — that's a different workflow with different tests.
+Thanks for helping make the docs better. This file is for **contributing to the docs site itself**. If you're looking for how to contribute to the privacytracker app, see [Contributing](https://docs.privacytracker.privacykey.org/develop/contributing) inside the docs (or `develop/contributing.mdx` in this repo if you're previewing locally) — that's a different workflow with different tests.
 
 ## Quick start
 

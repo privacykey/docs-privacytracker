@@ -117,14 +117,14 @@ npm run linkcheck
 2. Sign in at <https://dashboard.mintlify.com> with your GitHub account.
 3. Click **Add deployment** → select this repo → confirm `docs.json` as the config root.
 4. Mintlify auto-deploys to `<your-subdomain>.mintlify.app` and rebuilds on every push to `main`.
-5. Optional: under **Settings → Custom domain**, point a CNAME at `cname.mintlify.app` to host the docs at e.g. `docs.privacytracker.io`.
+5. Optional: under **Settings → Custom domain**, point a CNAME at `cname.mintlify.app` to host the docs at e.g. `docs.privacytracker.privacykey.org`.
 6. Optional: install the Mintlify GitHub App so PRs get a preview-link comment with rendered changes inline.
 
 The docs are intentionally decoupled from the main repo's wiki so hosting can move (Mintlify → Vercel → self-hosted) without rewriting the source.
 
 ## Adding a language
 
-The docs site is English-only today; the framework is in place to add others. See [Translating the docs](https://docs.privacytracker.io/develop/translating-the-docs) (or `develop/translating-the-docs.mdx` if you're previewing locally) for the step-by-step.
+The docs site is English-only today; the framework is in place to add others. See [Translating the docs](https://docs.privacytracker.privacykey.org/develop/translating-the-docs) (or `develop/translating-the-docs.mdx` if you're previewing locally) for the step-by-step.
 
 ## Capturing screenshots
 

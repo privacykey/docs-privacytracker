@@ -37,7 +37,8 @@
               "alternatives",
               "quickstart",
               "installation",
-              "configuration"
+              "configuration",
+              "devices"
             ]
           },
           {
@@ -171,7 +172,7 @@
   },
   "integrations": {
     "plausible": {
-      "domain": "docs.privacytracker.io"
+      "domain": "docs.privacytracker.privacykey.org"
     }
   },
   "metadata": {
