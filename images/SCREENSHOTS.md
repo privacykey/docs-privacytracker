@@ -2,7 +2,33 @@
 
 Where each screenshot should come from in the running app, what filename to use, and which docs page references it.
 
-Capture against a clean install with [`POST /api/dev/seed-sample-data`](https://github.com/privacykey/privacytracker/blob/main/app/api/dev/seed-sample-data/route.ts) so every shot shows the same demo apps. Use a 1440×900 window; Mintlify renders images at retina densities so 2× source resolution is fine.
+## Don't capture these by hand
+
+The app repo has a script that does it: `pnpm screenshots`. It seeds the canned
+fixture, disables the coachmark tour, sets a strict privacy profile so the risk
+badges aren't all empty, and writes 1440×900 @2× PNGs. `--light` adds
+light-mode variants of each.
+
+```bash
+# in a privacytracker checkout, first shell
+PRIVACYTRACKER_DATA_DIR=/tmp/pt-shots \
+AUDITOR_ADMIN_TOKEN=privacytracker-playwright-token \
+pnpm build && pnpm start -H 127.0.0.1 -p 3001
+
+# second shell
+pnpm screenshots --light
+```
+
+Output lands in `docs/screenshots/` in the app repo; copy the ones you need
+here under the filenames below. The seed is offline — `source=canned` uses the
+in-repo `SAMPLE_APPS` fixture and makes no App Store calls, so shots are
+reproducible and don't depend on what Apple is serving that day.
+
+It covers `dashboard`, `app-detail`, `privacy-map`, `apps-grid` and a mobile
+variant. The rest of the table below is still manual.
+
+Whatever you capture, use a 1440×900 window; Mintlify renders at retina
+densities so 2× source resolution is what you want.
 
 ## Required shots
 
@@ -18,6 +44,8 @@ Capture against a clean install with [`POST /api/dev/seed-sample-data`](https://
 | `wayback-historical-quarters.svg` | **Schematic mockup**, not a real screenshot. Replace with a real PNG once a contributor has run the importer against a long-tracked app and captured the full Q1 2021 → present timeline. Until then, the SVG illustrates the visual outcome of the extended floor for the cookbook DPIA recipe. | `cookbook.mdx#back-fill-a-year-of-history-before-a-regulator-audit` |
 | `privacy-map.png` | `/dashboard/privacy` | `introduction.mdx` |
 | `onboarding-audience.png` | `/welcome` | `quickstart.mdx#import-your-first-apps` |
+| `apps-grid.png` | `/dashboard/apps` after seeding | *(unreferenced — available for use)* |
+| `apps-grid-mobile.png` | `/dashboard/apps` at 390×844 | *(unreferenced — available for use)* |
 
 ## Filename conventions
 
