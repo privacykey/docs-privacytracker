@@ -42,14 +42,18 @@ When `privacytracker.app` launches:
   <Step title="Tauri spawns Node with that port in env">
     The bundled Node binary (`src-tauri/binaries/node-<arch>`) runs the standalone Next.js bundle (`server.js`) with `PORT=<that-port>` and `HOSTNAME=127.0.0.1`. The bundle binds to localhost only — no external network exposure.
   </Step>
-  <Step title="Tauri waits for /api/ready">
-    The Rust shell polls `http://127.0.0.1:<port>/api/ready` with a 30-second timeout. Once it returns `{ "ok": true }`, the WebView loads `http://127.0.0.1:<port>/` and the user sees the dashboard.
+  <Step title="Tauri waits for the sidecar to answer">
+    `sidecar::wait_until_ready` polls `http://127.0.0.1:<port>/api/apps` every 250 ms with a 2-second per-request timeout, and treats any response with status < 500 as ready — it never parses the body. The overall deadline is `READY_TIMEOUT`, **60 seconds** (the in-source comment records the bump from 30s: standalone-tree extraction takes 5–10s on a slow disk, and Next.js compiles the route on first hit). Once a probe succeeds, the WebView loads `http://127.0.0.1:<port>/` and the user sees the dashboard.
+
+    `/api/ready` exists, but nothing in the Tauri shell uses it — it's the Docker/compose healthcheck and the smoke-test probe. It answers `{ status: "ready" | "not_ready", checks }`, not `{ ok: true }`.
   </Step>
-  <Step title="Tauri keeps the child process alive">
-    `tauri-plugin-process` watches the sidecar PID. If it dies (panic, OOM, SIGTERM from `kill -9`), Tauri restarts it. The user sees a brief reload; the SQLite WAL recovery handles any in-flight writes.
+  <Step title="The sidecar watches Tauri, not the other way round">
+    Nothing restarts the sidecar. It's spawned once in `main.rs`, and `SidecarHandle` only ever terminates it — if the Node process dies mid-session, the WebView is left pointing at a dead port and the user has to relaunch.
+
+    The liveness relationship runs in the opposite direction. `sidecar.rs` passes `PRIVACYTRACKER_PARENT_PID` (Tauri's own PID) into the child, and `lib/parent-watchdog.ts` — installed from `instrumentation.ts` — probes that PID with signal 0 every 3 seconds after a 5-second initial delay, calling `process.exit(0)` when it disappears. That's what stops a Force Quit, `kill -9`, or Rust panic from leaving an orphaned Node process holding the SQLite WAL and the listening port. The clean-quit path is handled by SIGTERM from the Rust side; the watchdog covers the unclean ones.
   </Step>
   <Step title="Tauri kills the sidecar on app quit">
-    `Cmd-Q` triggers a `SIGTERM` to the sidecar followed by a 5-second drain window. The Node process flushes any in-flight DB writes (better-sqlite3 is synchronous, so this is usually instant) and exits.
+    `Cmd-Q` — and tray Quit, menu-bar Quit, and updater restart, all of which route through `RunEvent::ExitRequested` — sends `SIGTERM` to the sidecar's whole process group, then polls `try_wait()` every 50 ms for up to **3 seconds**. Still alive at the deadline, it escalates to `SIGKILL`; SQLite WAL crash recovery makes that safe either way. On Windows there's no SIGTERM step — the code falls straight through to `TerminateProcess`.
   </Step>
 </Steps>
 
@@ -133,25 +137,43 @@ The updater has no opt-out switch — the plugin is registered unconditionally i
 ├── privacy.db                         SQLite DB (the same shape Docker sees)
 ├── privacy.db-wal                     WAL journal while running
 ├── privacy.db-shm                     shared-memory file
-├── snapshots/                         server-local rolling backups (Settings → Backup)
-└── logs/
-    ├── app.log                        Rust shell log (window events, IPC)
-    └── sidecar.log                    Node sidecar log (HTTP, DB, AI calls)
+├── backup-signing.key                 per-install HMAC key for backup bundles (0600)
+├── backups/                           server-local rolling snapshots (Settings → Backup)
+├── standalone/                        Next.js standalone tree, extracted on first run
+└── .standalone-extracted-from-size-mtime   marker: which tarball the tree came from
 ```
 
-The `data/` directory you'd see in a Docker install corresponds to this entire folder on the desktop. A backup bundle from one is restorable into the other — see [Backup & restore → Migrating between install paths](/backup-and-restore#migrating-between-install-paths).
+There is no `logs/` directory here. `tauri-plugin-log` writes to Tauri's `LogDir` — `~/Library/Logs/org.privacykey.privacytracker/` on macOS — as a single rolling file holding the Rust shell's log. **Settings → Show log folder** opens it (the `open_log_dir` command).
+
+There is no `sidecar.log` at all. The Node sidecar's stdout and stderr are `Stdio::inherit()`, so its output goes to the parent's stdout — visible only when the app is launched from a terminal:
+
+```bash
+/Applications/privacytracker.app/Contents/MacOS/privacytracker
+```
+
+That's the diagnostic mode to reach for when boot fails.
+
+The `data/` directory you'd see in a Docker install corresponds to this entire folder on the desktop. A backup bundle from one is restorable into the other, with the untrusted opt-in — see [Backup & restore → Migrating between install paths](/backup-and-restore#migrating-between-install-paths).
 
 ## Touch ID
 
-`src-tauri/src/touch_id.rs` exposes a Tauri command that prompts the user via macOS LocalAuthentication for biometric confirmation. We use it for one thing today: confirming `POST /api/reset` from the desktop UI without requiring the user to type the admin token. The command returns a boolean to the WebView, which then includes the admin token (read from process env, never the WebView) in the Reset request.
+`src-tauri/src/touch_id.rs` wraps macOS LocalAuthentication (`LAPolicy::DeviceOwnerAuthentication` — Touch ID with login-password fallback) and exposes it as the `authenticate_touch_id` command, with a 60-second timeout. On non-macOS hosts it always returns `true`.
 
-This is a desktop-only convenience. The web/Docker surfaces still require manual token entry.
+Three call sites today:
+
+1. **cfgutil app uninstall.** A native prompt runs before the destructive `cfgutil` subprocess. The wizard's "type DELETE" step is webview-side, so a compromised webview could invoke the command directly — the native modal is what it can't fake. Documented at [Devices → Device actions](/devices#device-actions).
+2. **Enabling "Require unlock"** in Desktop settings — confirms the user before persisting `require_unlock`. Note the gate on window reveal isn't implemented yet: `reveal_main_window` always reveals immediately and defers the lock overlay to the webview, which doesn't draw one.
+3. **The "Test Touch ID" button** in Desktop settings.
+
+`POST /api/reset` involves neither. `SettingsView.resetAllData()` is a bare `fetch("/api/reset", { method: "POST" })` with no headers — the route is protected by the same-origin proxy check, a 30-per-10-minutes rate limit, and the admin token when one is required, returning 401 otherwise. The admin token reaches the server as the `pt_admin_token` cookie the user establishes through `/api/auth/admin-token/login`; the Rust side never reads it from the environment and never injects it.
+
+Touch ID is also deliberately *not* used to derive backup-encryption keys — bundles have to stay portable to the web build and to other machines.
 
 ## Things that commonly trip people up
 
 - **Sidecar fails to start with `NODE_MODULE_VERSION X does not match Y`.** better-sqlite3's native module was built against a different Node ABI. Either rebuild it (`npm rebuild better-sqlite3`) against the bundled Node version, or update the bundled Node to match. The [Tauri Bundled Node guide on the Plane board](https://sites.plane.so/issues/39b6604351894f09a5e903acce37d265) has the recipe.
-- **App opens but the WebView is blank.** Sidecar didn't reach `/api/ready` within the 30-second timeout. Tail `~/Library/Application Support/privacytracker/logs/sidecar.log` — usually it's a database lock from a previous bad shutdown (delete `privacy.db-wal` and `privacy.db-shm` while the app is closed) or a port conflict (rare on macOS, more common on Linux).
-- **Auto-update gets stuck.** Tauri caches the *checked* state for 24h regardless of outcome. To force a re-check: quit the app, delete `~/Library/Caches/com.privacykey.privacytracker/`, relaunch.
+- **App opens but the WebView is blank.** The sidecar didn't answer `/api/apps` within the 60-second readiness deadline. Relaunch from Terminal (`/Applications/privacytracker.app/Contents/MacOS/privacytracker`) to see the sidecar's stdout, and check `~/Library/Logs/org.privacykey.privacytracker/` for the Rust shell's log. Usually it's a database lock from a previous bad shutdown (delete `privacy.db-wal` and `privacy.db-shm` while the app is closed) or a port conflict (rare on macOS, more common on Linux).
+- **Auto-update gets stuck.** Tauri caches the *checked* state for 24h regardless of outcome. To force a re-check: quit the app, delete `~/Library/Caches/org.privacykey.privacytracker/`, relaunch.
 - **`spctl --assess` fails with `code object is not signed at all`.** The bundle was tampered with after signing, or the download was truncated. Re-download from GitHub releases.
 
 ## Where the code lives
@@ -163,6 +185,6 @@ This is a desktop-only convenience. The web/Docker surfaces still require manual
 | Touch ID command | `src-tauri/src/touch_id.rs` |
 | Standalone build pipeline | `scripts/stage-standalone.mjs`, `next.config.js` (look for `BUILD_STANDALONE`) |
 | macOS release workflow | `.github/workflows/macos-release.yml` |
-| Cask formula (Homebrew tap) | `homebrew-tap/Casks/privacytracker.rb` |
+| Cask formula (Homebrew tap) | `Casks/privacytracker.rb` in the separate [privacykey/homebrew-tap](https://github.com/privacykey/homebrew-tap) repo — regenerated on every release by `macos-release.yml`, so manual edits are overwritten |
 
-The release pipeline itself (signing, notarization, the GitHub Actions specifically) is intentionally not documented in the public docs — that's release-engineering material kept in the wiki and the private signing-setup repo.
+The release pipeline itself (signing, notarization, the GitHub Actions specifically) is intentionally not documented in the public docs — that's release-engineering material kept in the private signing-setup repo.

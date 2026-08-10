@@ -48,7 +48,7 @@ Day-to-day commands you'll actually use:
 ```bash
 npm install            # requires Node 24 LTS
 npm run dev            # http://localhost:3000
-npm run lint           # ESLint flat config for Next 16
+npm run lint           # Ultracite (Biome) — lint + format check
 npm run typecheck      # TypeScript without emitting files
 npm test               # focused node:test suite
 npm run lint:i18n      # check locales/*.json key parity against en.json
@@ -61,15 +61,17 @@ npm run build          # production build
 privacytracker/
 ├── app/                Next.js App Router pages + API routes
 ├── lib/                server-side logic — most of the product lives here
-├── tools/              out-of-band scripts (icon generation, ios-app-import companion)
+├── src-tauri/          Rust desktop shell + sidecar lifecycle
+├── scripts/            out-of-band scripts (ios-app-import companion, screenshots, standalone staging)
+├── deploy/             reference reverse-proxy stacks (caddy/, traefik/)
+├── tests/              node:test suites + Playwright specs
 ├── data/privacy.db     SQLite database (gitignored)
 ├── locales/            i18n bundles (en.json is the source of truth)
-├── .github/wiki/       canonical long-form documentation (kept for parity with this site)
 ├── AGENTS.md           coding-agent instructions for Codex
 └── CLAUDE.md           coding-agent instructions for Claude Code
 ```
 
-Anything not here — release pipeline, code signing, the GitHub Actions that publish notarized builds — lives in the wiki and is intentionally out of scope for this docs site. The point of the public docs is to help users self-host and contributors get productive; release engineering is internal.
+Anything not here — release pipeline, code signing, the GitHub Actions that publish notarized builds — is intentionally out of scope for this docs site. The point of the public docs is to help users self-host and contributors get productive; release engineering is internal.
 
 ## Reporting issues
 

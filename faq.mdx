@@ -17,13 +17,14 @@ description: "Common questions about what privacytracker is, what it isn't, and 
   </Accordion>
 
   <Accordion title="What data leaves my machine?" icon="shield">
-    Three things, all opt-in or transparent:
+    Four things, all opt-in or transparent:
 
     1. **App Store HTML** — fetched from `apps.apple.com` to read public privacy labels. Same network call your browser makes when you visit an app's page.
     2. **Privacy-policy text** — fetched from the developer's own domain when you've enabled AI summaries. The fetcher follows redirects and respects standard `Cache-Control` headers.
     3. **AI provider calls** — only if you've configured one. The policy text (chunked if necessary) is sent to OpenAI, Anthropic, or your local OpenAI-compatible endpoint. Nothing else — no app names, no usage, no telemetry.
+    4. **Notification webhooks** — only if you've pasted a webhook URL. App names and change summaries are POSTed to whatever chat service you pointed it at. Off unless you set it up; see [Configuration → Notification webhooks](/configuration#notification-webhooks).
 
-    privacytracker has no analytics or telemetry of its own. The SQLite database, all settings, all your annotations — everything stays on your machine.
+    Beyond those, privacytracker has no analytics or telemetry of its own. The SQLite database, all settings, all your annotations stay on your machine.
   </Accordion>
 
   <Accordion title="How much do AI summaries cost?" icon="dollar-sign">
@@ -32,19 +33,19 @@ description: "Common questions about what privacytracker is, what it isn't, and 
     - **OpenAI / Anthropic (hosted)** — typically a fraction of a cent per summary. A privacy policy of ~20 KB summarised through `gpt-4o-mini` or `claude-haiku-*` runs around USD $0.001-0.005 per app. Re-summarisation only happens when the policy text actually changes (we hash and skip otherwise), so the long-tail cost stays low.
     - **Local model (Ollama, LM Studio, llama.cpp)** — free at runtime; you pay in disk space and a one-time model download. Quality varies; Llama 3.1 8B and Qwen 2.5 7B both produce usable summaries on the lens prompts.
 
-    Set a hard cap in **Settings → AI → Daily token budget** if you want belt-and-braces cost protection.
+    There's no in-app spend cap — privacytracker never sees your provider's billing. For belt-and-braces protection, set a spending limit on the API key itself at OpenAI or Anthropic and use that key here. The hash-skip behaviour above is the other half of it: a policy that hasn't changed is never re-summarised.
   </Accordion>
 
   <Accordion title="Can I run this for my whole family on one server?" icon="users">
     Yes — that's the `audience: guardian` mode. One Docker container or one self-hosted instance can track apps across multiple people's devices; the import flow accepts batched `.txt` / `.csv` files from the [iPhone import helper](/installation#iphone-import-helper) so you can ingest a family member's app list in one pass.
 
-    privacytracker has no built-in user accounts or per-user partitioning — it's a single-user app at the data layer. If you need separate views for different family members, run separate instances (different ports, different `data/` directories) or rely on the `loved_one` audience export-bundle workflow to share a curated subset.
+    privacytracker has no built-in user accounts or per-user partitioning — it's a single-user app at the data layer. If you need separate views for different family members, run separate instances (different ports, different `data/` directories) or use the audit-bundle handoff workflow to share a curated subset.
   </Accordion>
 
   <Accordion title="What happens if Apple breaks the scraper?" icon="triangle-exclamation">
-    The parser has a three-layer fallback chain (`shelfMapping.privacyTypes.items` → `privacyHeader.seeAllAction.pageData.shelves` → generic `pageData.shelves`) so most shape changes absorb without a release. When Apple ships a fully breaking change — twice in the project's history so far — the fix is usually 5-10 lines in `lib/scraper.ts` once we have a known-broken example.
+    The parser has a four-layer fallback chain (`shelfMapping.privacyTypes.items` → `privacyHeader.seeAllAction.pageData.shelves` → generic `pageData.shelves` → `extractFromShoebox` for the historical Ember/FastBoot shape, which is what lets the Wayback importer reach back to Q1 2021) so most shape changes absorb without a release. When Apple ships a fully breaking change — twice in the project's history so far — the fix is usually 5-10 lines in `lib/scraper.ts` once we have a known-broken example.
 
-    If you hit a parser failure, the support bundle in **Settings → Diagnostics** captures everything we'd need to fix it; paste it into a GitHub issue.
+    If you hit a parser failure, the support bundle under **Settings → Admin → Deployment Diagnostics** captures everything we'd need to fix it; paste it into a GitHub issue.
   </Accordion>
 
   <Accordion title="Does this need to be online all the time?" icon="wifi">
@@ -56,9 +57,9 @@ description: "Common questions about what privacytracker is, what it isn't, and 
   <Accordion title="Can I export my data?" icon="file-export">
     Yes:
 
-    - **Backup bundle** — `GET /api/backup/export` produces a versioned JSON file with every app, label, snapshot, annotation, and notification. Restorable via `POST /api/backup/restore` with a typed-confirmation preview. See [Backup & restore](/backup-and-restore).
+    - **Backup bundle** — `GET /api/backup/export` produces a versioned JSON file with every app, label, snapshot, annotation, and notification. Restore it via `POST /api/backup/restore`; the UI adds a preview and a typed confirmation, and a bundle exported by a *different* install needs an explicit untrusted opt-in. See [Backup & restore](/backup-and-restore).
     - **CSV / JSON dump** — `GET /api/export?format=csv|json` for a flat data dump suitable for piping into a spreadsheet or another tool.
-    - **Audit bundle** — for the `audience: loved_one` workflow, a curated subset (apps, labels, AI summaries, exportable annotations) suitable for sharing with another household member or a regulator.
+    - **Audit bundle** — a curated subset (apps, labels, AI summaries, exportable annotations) suitable for sharing with another household member or a regulator. Available when your focus workflow is `other_handoff`, or when the audit-bundle export flag is switched on.
 
     Private annotations are unconditionally excluded from audit-bundle exports at the SQL level — there is no force-include path.
   </Accordion>
@@ -82,7 +83,7 @@ description: "Common questions about what privacytracker is, what it isn't, and 
   </Accordion>
 
   <Accordion title="What languages is the interface available in?" icon="language">
-    English today. The interface is built on `next-intl` with the localisation framework already wired up, but only the English bundle ships right now; the active language is selected at render time from your app settings, so other locales light up as they're translated. Adding a language is a contributor task — see [Translations](/develop/translations).
+    English (`en`) and Simplified Chinese (`zh`), both at full key parity. Switch between them under **Settings → Language**. The interface is built on `next-intl`; the active language is resolved on every server-rendered request from the `NEXT_LOCALE` cookie, falling back to English when it's absent or holds an unsupported value. Adding a language is a contributor task — see [Translations](/develop/translations).
   </Accordion>
 
   <Accordion title="Can I contribute a new privacy-label parser, locale, or chart?" icon="git-pull-request">

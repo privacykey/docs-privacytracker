@@ -24,7 +24,8 @@ browser cannot load the app at all.
 | `PRIVACYTRACKER_ALLOWED_HOSTS` | (unset) | Comma-separated `Host` values to accept, **appended** to the always-allowed loopback set (`localhost`, `127.x`, `::1`). Supports `*.suffix` wildcards. Listing a non-loopback entry also flips the instance to network-exposed, which makes `AUDITOR_ADMIN_TOKEN` mandatory. |
 | `PRIVACYTRACKER_NETWORK_EXPOSED` | (unset) | Boolean (`1`/`true`/`yes`/`on`). Forces the network-exposed posture without naming a host — for a reverse proxy that rewrites `Host`. |
 | `PRIVACYTRACKER_TRUST_PROXY` | (unset) | Boolean. Honour `X-Forwarded-Host` / `X-Forwarded-For` for the host allowlist, rate-limit keys, and audit IPs. This is an operator assertion that a trusted proxy sits in front — leave it unset for a direct bind, where those headers are attacker-controlled. |
-| `PRIVACYTRACKER_BIND_HOST` | (unset) | Explicit bind interface. A specific non-loopback IP implies network-exposed. `HOSTNAME` is deliberately *not* trusted as a bind signal, because Docker sets it to the container ID. |
+| `PRIVACYTRACKER_BIND_HOST` | (unset) | Explicit bind interface. A specific non-loopback IP implies network-exposed. |
+| `HOSTNAME` | (set by Docker) | Fallback bind signal, honoured **only** when its value parses as an IP literal or a loopback token — never as a hostname, because Docker sets it to the container ID. When it does parse, it feeds the same classification as `PRIVACYTRACKER_BIND_HOST` and can therefore flip the network-exposed posture that makes `AUDITOR_ADMIN_TOKEN` mandatory. The Tauri launcher relies on this, passing `HOSTNAME=127.0.0.1`. `PRIVACYTRACKER_BIND_HOST` takes precedence when both are set. |
 
 <Warning>
   Trust is derived from deployment config, never from request headers — a
@@ -38,8 +39,11 @@ browser cannot load the app at all.
 | Variable | Default | Purpose |
 |---|---|---|
 | `PRIVACYTRACKER_RUNTIME` | (unset) | Set to `desktop` by the Tauri sidecar launcher. Gates desktop-only surfaces and feature-flag resolution. |
-| `WORKER_DISABLED` | (unset) | Suppresses the background scheduler tick — used by tests and by processes that should not run sync. |
+| `DEPLOYMENT` | (auto-detected) | Override the deployment label: `docker`, `tauri`, `homebrew`, or `node`. Auto-detection probes `/.dockerenv`, then the cgroup, then `HOMEBREW_PREFIX`, and falls back to `node`. The label's only effect is which upgrade command the update banner suggests — set it when auto-detection guesses wrong for your packaging. |
+| `WORKER_DISABLED` | (unset) | Set to `1` to force bulk SQLite writes to run inline on the main thread instead of on the `worker_threads` DB writer. Used by tests, and implied during production builds. Only the literal `1` is honoured. It does **not** disable background sync. |
 | `BUILD_STANDALONE` | (unset) | Build-time flag for `pnpm build:standalone` (the Tauri sidecar bundle). |
+
+Nothing suppresses the background scheduler tick from the environment — the 30-minute ticker in `instrumentation.ts` reads no environment variable. To stop scheduled sync, set the sync schedule to `manual` (see [Background sync](#background-sync)).
 
 Everything else (AI provider, sync schedule, Wayback toggles, notification prefs, focus state, feature-flag overrides) lives in `app_settings` and is changed through the UI.
 
@@ -78,7 +82,7 @@ ollama serve
 # Model:     llama3.2
 ```
 
-The summariser scores each policy against the lenses defined in `POLICY_TOPIC_GUIDES` (`collection_scope`, `ads_marketing`, `third_party_sharing`, `retention`, `user_rights`, etc.). Summaries only regenerate when the document hash changes — cosmetic edits don't burn AI calls.
+The summariser scores each policy against eight fixed lenses — `collection_scope`, `product_use`, `ads_marketing`, `third_party_sharing`, `tracking_analytics`, `user_controls`, `data_retention`, `children_minors` — defined as `POLICY_LENSES` in `lib/policy-summary-meta.ts`. Stored summaries are rebuilt against that list and unrecognised keys are dropped, so those eight are the only ones you'll see in `summary_json` or in an API response. Summaries only regenerate when the document hash changes — cosmetic edits don't burn AI calls.
 
 ## Background sync
 
@@ -86,10 +90,37 @@ Two knobs:
 
 | Setting | Where | Notes |
 |---|---|---|
-| `sync_schedule` | Settings → Sync | `daily` or `weekly` cadence. The 30-minute ticker in `instrumentation.ts` checks `getSchedulerStatus().isDue` and calls `runScheduledSync()`. |
+| `sync_schedule` | Settings → Sync | `manual`, `daily`, or `weekly`. **Defaults to `manual`** — no background sync runs until you pick a cadence. The 30-minute ticker in `instrumentation.ts` checks `getSchedulerStatus().isDue` and calls `runScheduledSync()`; on `manual` it is never due. |
 | `sync_running` | Internal | Cross-request mutex stored in `app_settings`. Respect it if you add another entry point that could trigger a sync. |
 
 Apple's 429 handling is built in: the runner bails out of the loop on the first 429, records a `partial` activity row with `rateLimited` totals, and clears state + mutex cleanly so the next 30-minute tick can retry fresh. That's deliberately different from a process kill — 429 is a recoverable condition.
+
+## Notification webhooks
+
+The bell is always on. On top of it, privacytracker can POST notifications to a chat webhook — Slack, Discord, Teams, or any endpoint that accepts JSON. Off by default.
+
+On the desktop app, the *Keep privacytracker running in the background* wizard sets this up alongside sync cadence and quiet hours. On any build, four `app_settings` keys drive it:
+
+| Setting | Values | Notes |
+|---|---|---|
+| `notification_webhook_url` | a URL, or `''` | Empty disables delivery. Validated with the same SSRF-defended checker as the AI base URL, so private-network destinations are rejected. |
+| `notification_webhook_format` | `slack` / `discord` / `teams` / `generic` | `slack` and `discord` post rendered text; `teams` posts a MessageCard; `generic` posts `{ title, text, notifications[] }`. |
+| `notification_webhook_frequency` | `immediate` / `daily_summary` / `weekly_summary` / `off` | `immediate` fires as each notification lands. The summaries batch unread notifications and are posted from the 30-minute tick once a day or week has elapsed. |
+| `notification_webhook_last_sent` | epoch ms | Written by the summary tick. Don't set it by hand. |
+
+Test a URL before committing to it — this fires a sample payload and writes nothing:
+
+```bash
+curl -X POST http://localhost:3000/api/notifications/webhook-test \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://localhost:3000" \
+  --data '{"url":"https://hooks.slack.com/services/...","format":"slack"}'
+# {"ok":true,"status":200}
+```
+
+Delivery failures are logged and swallowed — a dead webhook never blocks the in-app notification write. `GET /api/settings` returns the URL masked; posting the masked value back leaves the stored URL untouched.
+
+Payloads carry app names and change summaries. That is a real egress path — see [Security → What data leaves your device](/security#what-data-leaves-your-device).
 
 ## Wayback import
 

@@ -17,16 +17,25 @@ Self-hosted users should substitute their own base URL (and host header — see 
 
 ## Authentication
 
-There are two layers, applied to *destructive* routes only. Read-only endpoints have neither.
+Three layers. Only the middle one is confined to mutations — reads pass the host allowlist like everything else, and on a network-exposed instance a list of sensitive read paths needs the admin token too.
 
 <AccordionGroup>
-  <Accordion title="Same-origin CSRF check (always on)" icon="shield">
-    Every mutating verb (`POST`, `PUT`, `PATCH`, `DELETE`) checks that the `Origin` header matches the request host. Browser requests from your installed UI satisfy this automatically; cross-origin or curl-from-a-different-host calls won't.
-
-    Failed CSRF returns:
+  <Accordion title="Host allowlist (always on, every method)" icon="shield-halved">
+    Before any other check, a request whose effective `Host` isn't allowlisted is rejected — `GET` included:
 
     ```json
-    { "error": "origin_mismatch" }
+    { "error": "Host not allowed" }
+    ```
+
+    with status **400**. The allowlist defaults to loopback; operators extend it with `PRIVACYTRACKER_ALLOWED_HOSTS`. If your integration talks to the instance under a hostname the operator hasn't listed, every call fails here regardless of method or credentials.
+  </Accordion>
+  <Accordion title="Same-origin CSRF check (always on, mutations)" icon="shield">
+    Every mutating verb (`POST`, `PUT`, `PATCH`, `DELETE`) under `/api/` checks that the `Origin` header matches the request host, unless the request carries a valid admin token instead. Browser requests from your installed UI satisfy this automatically; cross-origin or curl-from-a-different-host calls won't.
+
+    Failed CSRF returns **403**:
+
+    ```json
+    { "error": "Cross-origin mutation rejected" }
     ```
 
     From `curl`, set the header explicitly:
@@ -39,7 +48,11 @@ There are two layers, applied to *destructive* routes only. Read-only endpoints 
     If you're behind a reverse proxy, the proxy must forward the original `Host` header. See [Troubleshooting → Reverse-proxy CSRF rejection](/troubleshooting#reverse-proxy-csrf-rejection).
   </Accordion>
   <Accordion title="Admin token (optional, opt-in)" icon="key">
-    When `AUDITOR_ADMIN_TOKEN` is set in the environment, *destructive* routes (`POST /api/reset`, `DELETE /api/apps`, `POST /api/settings`, `DELETE /api/wayback/import-all`, etc.) require an `X-Auditor-Admin-Token` header on top of the CSRF check. Verification uses `crypto.timingSafeEqual`.
+    When `AUDITOR_ADMIN_TOKEN` is set in the environment, *destructive* routes (`POST /api/reset`, `DELETE /api/apps`, `POST /api/settings`, `DELETE /api/wayback/import-all`, etc.) require the token on top of the CSRF check. Verification uses `crypto.timingSafeEqual`. Missing or wrong token returns **401**:
+
+    ```json
+    { "error": "Admin token required" }
+    ```
 
     Failed attempts are recorded in the `audit_log` table with requester IP + user agent.
 
@@ -49,7 +62,25 @@ There are two layers, applied to *destructive* routes only. Read-only endpoints 
       -H "X-Auditor-Admin-Token: $AUDITOR_ADMIN_TOKEN"
     ```
 
-    The token is purely opt-in — there's no built-in user/account system in privacytracker. The intent is to gate destructive routes when the app is exposed beyond a single-user trusted boundary (e.g., self-hosted on a LAN).
+    **Reads are gated too on a network-exposed instance.** Once the operator sets `PRIVACYTRACKER_NETWORK_EXPOSED`, lists a non-loopback host, or binds to a specific non-loopback IP, `GET` requests under these prefixes also need the token:
+
+    ```
+    /api/ai/debug-log
+    /api/backup/
+    /api/deployment/
+    /api/desktop/diagnostics
+    /api/diagnostics/
+    /api/export
+    /api/import/
+    ```
+
+    Without it they return 401 `{ "error": "Admin token required for non-local API access" }`. This is the usual cause of a surprise 401 on `GET /api/backup/export` from a LAN integration.
+
+    Two of those reads don't wait for exposure. `GET /api/backup/export` and `GET /api/ai/debug-log` check `adminTokenConfigured() || isNetworkExposed()` in the handler itself, so they return 401 `{ "error": "Admin token required" }` as soon as `AUDITOR_ADMIN_TOKEN` is set — on a loopback-only install too.
+
+    **Cookie sessions.** `POST /api/auth/admin-token/login` with `{ "token": "..." }` exchanges the token for an 8-hour HttpOnly `pt_admin_token` cookie, which every gated route accepts in place of the header. `POST /api/auth/admin-token/logout` clears it; `GET /api/auth/admin-token/status` returns `{ configured, unlocked }`. Login and logout enforce same-origin themselves and login is capped at 5 attempts per minute; `status` is a read, so neither its handler nor the CSRF layer origin-checks it — it still has to clear the host allowlist, and it never returns the token. Prefer the header for scripted callers; the cookie exists so the browser UI never holds the raw secret in JavaScript.
+
+    The token is a single shared secret — there's no built-in user/account system in privacytracker. The intent is to gate destructive routes when the app is exposed beyond a single-user trusted boundary (e.g., self-hosted on a LAN).
   </Accordion>
 </AccordionGroup>
 
@@ -59,23 +90,39 @@ A handful of patterns hold across every endpoint:
 
 - **`apps.id` is Apple's numeric track ID**, extracted from `/id<digits>/` in the App Store URL — not a UUID. Snapshots, privacy rows, and notifications all key off it.
 - **Timestamps are Unix milliseconds**, not seconds and not ISO-8601. JavaScript `Date.now()`-shaped.
-- **Errors are `{ "error": "<machine-readable-code>", "details"?: "<human description>" }`** with the appropriate 4xx / 5xx status. Codes are stable; details are not.
+- **Errors are `{ "error": "<message>" }`** with the appropriate 4xx / 5xx status. The message is human prose, not a stable machine code — switch on the status, not the string. A few routes add structured fields alongside it (`POST /api/backup/restore` sends `code: "untrusted_backup"` on a 409); those are documented per-endpoint.
 - **Streamed responses** (`POST /api/wayback/import-all?stream=1`) emit NDJSON with a `kind` field per line — `batch-start`, `app-start`, `target`, `app-done`, `summary`.
 - **Mutation routes returning 409 mean a mutex is held** by another in-flight run. Wait or check `GET /api/tasks/active` to see what's running.
 
 ## Rate limiting
 
-privacytracker doesn't impose its own rate limits — it's a single-user app. The rate limit you'll actually hit is **Apple's 429 on the iTunes Search API and `apps.apple.com`**. The bulk runners handle this gracefully:
+A 429 from privacytracker has two possible causes, and they need different handling.
+
+**privacytracker's own limiter.** Most routes are rate-limited per client IP. Some denials carry a `Retry-After` header in seconds — honour it when it's there, but don't depend on it. A clear majority of the 429 paths set it — 33 of the 56 rate-limited routes: all 23 behind the shared mutation guard, plus 10 direct callers such as `/api/scrape`, `/api/search`, and the token login. The rest return a bare 429 — including `POST /api/reset` and `POST /api/backup/restore` in the table below — so fall back to the route's own window when the header is absent. Representative limits:
+
+| Route | Limit |
+|---|---|
+| `POST /api/scrape` | 30 / minute |
+| `POST /api/search` | 60 / minute |
+| `POST /api/reset` | 30 / 10 minutes |
+| `POST /api/backup/restore` | 3 / 10 minutes |
+| `POST /api/auth/admin-token/login` | 5 / minute |
+
+Note that unless the operator sets `PRIVACYTRACKER_TRUST_PROXY`, forwarded-IP headers are ignored and every caller shares one bucket per route — so a busy sibling integration can consume your budget.
+
+**Apple's 429**, on the iTunes Search API and `apps.apple.com`, is the slower one. It surfaces through the bulk runners rather than as an HTTP status on your call:
 
 - The runner bails out of its loop on the first 429.
 - A `partial: rateLimited` activity row is written.
 - State and mutex are cleared cleanly, so the next 30-minute scheduler tick can retry fresh.
 
-If your integration triggers scrapes directly via `POST /api/scrape`, expect 429 occasionally and back off for ~30 minutes when you see one.
+Tell them apart by where the 429 lands, not by `Retry-After` — the internal limiter sets that header on some routes only. An internal denial arrives as an HTTP 429 on the call you just made and clears within that route's own window (under a minute for `/api/scrape`). If you're seeing repeated `partial: rateLimited` in the activity log with no 429 on your own requests, that's Apple, and the useful response is to slow the schedule rather than retry.
 
 ## Backup bundle format
 
-`GET /api/backup/export` and `POST /api/backup/restore` use a versioned JSON envelope. The shape is documented in the spec; the canonical implementation lives in `lib/audit-bundle.ts`. Restore is forward-compatible — a v1.0 bundle restores cleanly into v1.1+, but not the reverse (newer bundles can carry fields older versions don't know how to migrate down).
+`GET /api/backup/export` and `POST /api/backup/restore` use a versioned JSON envelope carrying an integer `version` (currently `1`) — the bundle format version, not the app version. The canonical implementation is `lib/backup.ts`. A bundle from an older format restores into a newer release; a newer one is refused outright rather than misparsed.
+
+Envelopes are HMAC-signed with a key unique to the install that exported them. A bundle from a different install fails verification and gets **409** `{ "error": "...", "code": "untrusted_backup", "signaturePresent": true }`. To restore it anyway, pass `?allowUntrusted=1` or the header `x-allow-untrusted-backup: 1`. There is no `confirm` parameter — the `RESTORE` typing step is browser-side only.
 
 Private annotations (`visibility = 'private'`) are unconditionally excluded from audit-bundle exports at the SQL level. There is no force-include path.
 
@@ -155,3 +202,4 @@ The OpenAPI spec covers the public-contract surface — the routes integrators m
 | Bulk task status | `app/api/tasks/active/route.ts`, `app/api/{sync,wayback,policy}/**/route.ts` |
 | Stats, charts | `app/api/stats/**/route.ts` |
 | Health, deployment, admin | `app/api/{health,ready,deployment,admin,reset,dev}/**/route.ts` |
+| Admin-token sessions | `app/api/auth/admin-token/{login,logout,status}/route.ts` |

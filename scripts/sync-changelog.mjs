@@ -76,22 +76,29 @@ async function loadSource(arg) {
   return response.text();
 }
 
+// Upstream section headings, in both shapes we've shipped:
+//   Keep a Changelog (current): `## [Unreleased]`, `## [0.1.2] — 2026-06-12`
+//   Legacy release.yml output:  `## v1.1.0 — Title`
+// Anchored at `##` so `### Added` subsections inside an entry never match.
+const VERSION_HEADING = /^##\s+(?:\[[^\]]+\]|v\d)/i;
+
 function stripUpstreamHeader(source) {
   // The upstream file starts with:
   //
   //     # Changelog
   //
-  //     All notable changes to this project are recorded here. Sections are
-  //     generated automatically by `.github/workflows/release.yml` ...
+  //     All notable changes to this project are documented here. The format is
+  //     based on Keep a Changelog ...
   //
   // We replace that with our own frontmatter + intro and keep everything from
-  // the first version section (`## v…`) onwards.
+  // the first version section onwards — including `[Unreleased]`, which is
+  // where in-flight work lands between releases.
   const lines = source.split("\n");
-  const versionStart = lines.findIndex((line) => /^##\s+v/i.test(line));
+  const versionStart = lines.findIndex((line) => VERSION_HEADING.test(line));
 
   if (versionStart === -1) {
     throw new Error(
-      "Upstream CHANGELOG.md has no version section (## vX.Y.Z) — refusing to overwrite changelog.mdx blindly.",
+      "Upstream CHANGELOG.md has no version section (## [X.Y.Z] or ## vX.Y.Z) — refusing to overwrite changelog.mdx blindly.",
     );
   }
 

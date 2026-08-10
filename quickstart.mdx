@@ -66,7 +66,7 @@ Whichever way you installed it, the in-app workflow is the same.
 
 <Steps>
   <Step title="Pick an audience and goals">
-    First-run onboarding asks who you're tracking apps for (`self`, `loved one`, `guardian`) and what you want to focus on (`understand`, `declutter`, `minimal`, plus an optional `accessibility` modifier). These choices tune the UI, and a short goal-aware guided tour highlights the surfaces they unlock — dismiss it any time and replay it later from the focus tour at `/help/focus`.
+    First-run onboarding asks who you're tracking apps for (`self`, `loved one`, `guardian`) and what you want to focus on (`monitor`, `cleanup`, `minimal`, plus an optional `accessibility` modifier). These choices tune the UI, and a short goal-aware guided tour highlights the surfaces they unlock — dismiss it any time and replay it later from the focus tour at `/help/focus`.
 
     Changed your mind? Re-pick audience and goals from the **Your focus** card at the top of **Settings** via its **Adjust** button. Individual feature flags can be fine-tuned separately under **Settings → Developer Options → Feature flags**.
   </Step>
@@ -112,10 +112,10 @@ Whichever way you installed it, the in-app workflow is the same.
 
 ```bash
 curl http://localhost:3000/api/ready
-# {"ok":true,"db":"reachable","data":"writable"}
+# {"status":"ready","checks":{...}}
 ```
 
-`GET /api/ready` is the readiness probe (DB reachable + data dir writable). `GET /api/health` is the cheaper liveness probe used by uptime checks.
+`GET /api/ready` is the readiness probe (DB reachable + data dir writable). It returns 200 with `status: "ready"`, or 503 with `status: "not_ready"` and the failing entries in `checks` — which is what makes it usable as a Docker `HEALTHCHECK`. `GET /api/health` is the cheaper liveness probe used by uptime checks.
 
 ## Next steps
 

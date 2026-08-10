@@ -32,7 +32,7 @@ Restore is the inverse — replace the file with the app stopped, then start it 
 
 ## Backup bundle (versioned, app-aware)
 
-`GET /api/backup/export` produces a single JSON file with every app, label, snapshot, annotation, notification, focus state, and feature-flag override. It's versioned, so a bundle exported from v1.1 restores cleanly into v1.2 and later.
+`GET /api/backup/export` produces a single JSON file with every app, label, snapshot, annotation, notification, focus state, and feature-flag override. The envelope carries an integer `version` field — currently `1` — which is the *bundle format* version, not the app version. A bundle restores into any release that understands that format or a later one; a bundle from a newer format is refused with a message telling you to upgrade, rather than being misparsed. Tables missing on an older schema are skipped, so a newer bundle still restores what an older install can hold.
 
 From the UI: **Settings → Backup → Export bundle**.
 
@@ -50,7 +50,7 @@ The bundle is plain JSON — you can `gzip` it for storage and restore from the 
 
 ### Restore with preview
 
-`POST /api/backup/restore` requires a typed-confirmation step (you type `RESTORE` to confirm) and surfaces a preview of what will be replaced before any writes happen.
+In the UI, restore is a two-step flow: `POST /api/backup/preview` shows what will be replaced, then you type `RESTORE` to confirm before anything is written.
 
 From the UI: **Settings → Backup → Import bundle** → choose the file → confirm in the preview dialog.
 
@@ -64,31 +64,57 @@ curl -X POST http://localhost:3000/api/backup/preview \
   --data-binary @backup-2026-05-09.json
 
 # 2. Restore (after reviewing the preview)
-curl -X POST "http://localhost:3000/api/backup/restore?confirm=RESTORE" \
+curl -X POST http://localhost:3000/api/backup/restore \
   -H "Content-Type: application/json" \
   -H "Origin: http://localhost:3000" \
   --data-binary @backup-2026-05-09.json
 ```
 
-Restore wipes the existing database and reloads from the bundle. Take a file copy of `data/privacy.db` first as a safety net.
+The typed `RESTORE` string is a browser-side guardrail only — the route reads no `confirm` parameter, so a `curl` restores immediately. Take a file copy of `data/privacy.db` first as a safety net; restore wipes the existing database and reloads from the bundle.
+
+Restore is rate-limited to 3 attempts per 10 minutes and requires the admin token when one is configured.
+
+### Restoring a bundle from another install
+
+Every exported bundle carries an HMAC-SHA256 signature computed with a per-install key at `<data dir>/backup-signing.key`. That key is generated on first use and never leaves the machine, so a bundle exported by a *different* install — a different container, a different Mac, a fresh data directory — cannot verify. Restoring one is rejected:
+
+```
+409 { "error": "...", "code": "untrusted_backup", "signaturePresent": true }
+```
+
+This is deliberate: it makes "reset, then restore my own backup" a trusted operation and forces cross-install restores to be a decision rather than an accident. To proceed, opt in explicitly:
+
+```bash
+curl -X POST "http://localhost:3000/api/backup/restore?allowUntrusted=1" \
+  -H "Content-Type: application/json" \
+  -H "Origin: http://localhost:3000" \
+  --data-binary @backup-from-old-machine.json
+```
+
+The header `x-allow-untrusted-backup: 1` does the same thing. Both accept `1` or `true`. Rows from an untrusted bundle are still sanitised on the way in, but the signature no longer tells you where the file came from — only restore a bundle you can vouch for yourself.
+
+<Warning>
+  The desktop and web UIs do not send this flag today. A cross-install restore has to go through the API until they do.
+</Warning>
 
 ## Server-local rolling snapshots
 
-privacytracker can keep its own rolling snapshots in the data directory under `data/snapshots/` — useful if you don't want to wire up an external backup tool but still want a few historical copies on hand.
+privacytracker can keep its own rolling snapshots in the data directory under `data/backups/` — useful if you don't want to wire up an external backup tool but still want a few historical copies on hand.
 
-Configure in **Settings → Backup → Server snapshots**:
+They are **off by default**. Turn them on and configure them in **Settings → Backup → Automatic local snapshots**:
 
 | Setting | Default | Notes |
 |---|---|---|
-| **Schedule** | weekly | `daily` / `weekly` / `monthly` / `off` |
-| **Retention** | 4 | how many recent snapshots to keep; older ones are auto-pruned |
-| **Take one now** | — | one-click snapshot for ad-hoc backups |
+| **Create snapshots automatically** | off | nothing is written until you enable this |
+| **Snapshot interval** | Daily (24h) | Every 6 hours / Every 12 hours / Daily / Weekly |
+| **Snapshots to keep** | 10 | how many recent snapshots to keep; older ones are auto-pruned. Clamped to 1–100 |
+| **Create snapshot now** | — | one-click snapshot for ad-hoc backups |
 
-Snapshots are stored as the same versioned JSON bundle format. List them via `GET /api/backup/snapshots`; download a specific one via `GET /api/backup/snapshots/<filename>`.
+The server checks on startup and on each 30-minute tick, writing a snapshot when the interval is due. Snapshots use the same versioned JSON bundle format. List them via `GET /api/backup/snapshots`; download a specific one via `GET /api/backup/snapshots/<filename>`.
 
 ## Migrating between install paths
 
-The same versioned bundle works as the migration vehicle.
+The same versioned bundle works as the migration vehicle, with one caveat: the destination is a different install, so the bundle's signature won't verify there. Every migration below needs the `allowUntrusted` opt-in described in [Restoring a bundle from another install](#restoring-a-bundle-from-another-install), which today means finishing the restore through the API rather than the UI.
 
 ### Docker → desktop app
 
@@ -107,13 +133,22 @@ The same versioned bundle works as the migration vehicle.
     Download the latest `.dmg` from [Releases](https://github.com/privacykey/privacytracker/releases/latest), drag to `/Applications`, launch.
   </Step>
   <Step title="Import the bundle">
-    Open the desktop app → **Settings → Backup → Import bundle** → choose `privacytracker-export.json` → type `RESTORE` to confirm.
+    Launch the desktop app once so it creates its data directory, then restore through the API with the untrusted opt-in — the bundle was signed by the Docker install, so the UI path rejects it:
+
+    ```bash
+    curl -X POST "http://localhost:3000/api/backup/restore?allowUntrusted=1" \
+      -H "Content-Type: application/json" \
+      -H "Origin: http://localhost:3000" \
+      --data-binary @privacytracker-export.json
+    ```
+
+    The desktop sidecar serves on `127.0.0.1`; check **Settings → Admin → Deployment Diagnostics** for the port if 3000 is taken.
   </Step>
 </Steps>
 
 ### Desktop app → Docker
 
-Same flow in reverse. Export from the desktop app's **Settings → Backup**, drop the JSON next to `docker-compose.yml`, start the stack, import via the UI.
+Same flow in reverse. Export from the desktop app's **Settings → Backup**, drop the JSON next to `docker-compose.yml`, start the stack, then restore with `?allowUntrusted=1` against `http://localhost:3000`.
 
 ### Source checkout → Docker (or vice versa)
 
@@ -129,6 +164,7 @@ A bundle restore replaces app data and settings. It does **not** restore:
 - **Auto-update binaries** — those are managed by Tauri's updater on the desktop app or `brew upgrade` on Homebrew.
 - **Environment variables** — `AUDITOR_ADMIN_TOKEN`, etc., are external to the database. Re-set them in your runtime config.
 - **iPhone import helper output** — those are stand-alone `.txt` / `.csv` files; back them up separately if you want to keep them.
+- **The backup signing key** — `backup-signing.key` sits next to `privacy.db` in the data directory, deliberately outside the database so a reset or restore can't invalidate your existing bundles. A plain file copy of the whole `data/` directory carries it along; a bundle export doesn't.
 
 ## Disaster recovery
 
@@ -161,14 +197,14 @@ If `data/privacy.db` is corrupted (rare; SQLite is durable, but not invincible t
 
 ## Verifying a backup
 
-A good habit is to periodically verify your backups by restoring one into a throwaway instance:
+A good habit is to periodically verify your backups by restoring one into a throwaway instance. The throwaway has a fresh data dir and therefore a fresh signing key, so the bundle reads as untrusted there — pass `allowUntrusted=1`:
 
 ```bash
 # Spin up a temporary container pointed at a fresh data dir
 docker run --rm -p 3001:3000 -v $(pwd)/test-data:/app/data privacytracker:latest &
 
 # Import the bundle
-curl -X POST "http://localhost:3001/api/backup/restore?confirm=RESTORE" \
+curl -X POST "http://localhost:3001/api/backup/restore?allowUntrusted=1" \
   -H "Content-Type: application/json" \
   -H "Origin: http://localhost:3001" \
   --data-binary @backup-2026-05-09.json
@@ -180,3 +216,5 @@ rm -rf test-data
 ```
 
 If the counts match what you expect from the source instance, your backup is good.
+
+To verify the signature as well as the contents, copy `backup-signing.key` from the source install's data directory into `test-data/` before starting the container. The restore then succeeds without the flag — which proves the bundle really was produced by that install and hasn't been altered since.
