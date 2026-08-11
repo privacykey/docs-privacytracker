@@ -26,11 +26,19 @@ on:
 jobs:
   lychee:
     name: lychee
-    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, repo-ci]
     permissions:
       contents: read
       issues: write
     steps:
+      # Before checkout: nothing is fetched onto the runner until the
+      # context is proven trusted. A no-op on GitHub-hosted runners.
+      - name: Assert trusted runner context
+        uses: privacykey/gh-workflows/actions/assert-trusted-runner@v1
+
       - uses: actions/checkout@v4
 
       - name: Run docs smoke check
