@@ -15,3 +15,7 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Mintlify export output (built by `just export`)
+export.zip
+dist/
