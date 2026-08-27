@@ -776,7 +776,9 @@ paths:
   /api/auth/admin-token/status:
     get:
       tags: [Admin]
-      summary: Is an admin token configured, and is this caller unlocked?
+      # No trailing "?": Mintlify slugifies the summary into the page route, and a
+      # question mark is a query separator, so the generated page 404s at export.
+      summary: Read admin-token and unlock status
       description: Never returns the token itself.
       responses:
         "200":
