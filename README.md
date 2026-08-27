@@ -2,6 +2,10 @@
 
 Public-facing documentation site for [privacytracker](https://github.com/privacykey/privacytracker), built with [Mintlify](https://mintlify.com).
 
+Production is a Cloudflare Worker serving the static export as assets
+([`wrangler.jsonc`](wrangler.jsonc)). `just deploy` builds and publishes it.
+**Hostname:** `docs.privacytracker.privacykey.org` *(DNS not configured yet)*
+
 ## Audience split
 
 The site is organised around two distinct readers, with a third tab for the API:
@@ -110,17 +114,6 @@ brew install lychee
 npm run check
 npm run linkcheck
 ```
-
-## Deploying to Mintlify hosting
-
-1. Push this repo to GitHub (it lives standalone, separate from the main `privacytracker` codebase).
-2. Sign in at <https://dashboard.mintlify.com> with your GitHub account.
-3. Click **Add deployment** → select this repo → confirm `docs.json` as the config root.
-4. Mintlify auto-deploys to `<your-subdomain>.mintlify.app` and rebuilds on every push to `main`.
-5. Optional: under **Settings → Custom domain**, point a CNAME at `cname.mintlify.app` to host the docs at e.g. `docs.privacytracker.privacykey.org`.
-6. Optional: install the Mintlify GitHub App so PRs get a preview-link comment with rendered changes inline.
-
-The docs are intentionally decoupled from the main repo's wiki so hosting can move (Mintlify → Vercel → self-hosted) without rewriting the source.
 
 ## Adding a language
 

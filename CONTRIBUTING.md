@@ -200,7 +200,7 @@ If you're reviewing someone else's docs PR, the checklist is:
 - Does it cross-link instead of duplicating? Existing pages should be referenced rather than re-written.
 - Are anchors stable? Renaming a heading breaks every inbound link.
 - Does it pass `npm run check`?
-- Mintlify preview link rendering OK? (The Mintlify GitHub App posts a preview URL on every PR once the repo is connected.)
+- Does the page render? Run `npm run dev` locally, or check the preview URL Workers Builds uploads for the branch once the repo is connected.
 
 ## Reporting issues vs. opening PRs
 
