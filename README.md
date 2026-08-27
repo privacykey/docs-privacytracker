@@ -33,7 +33,7 @@ Open <http://localhost:3000>. The preview hot-reloads as you edit MDX files.
 ## Project layout
 
 ```
-privacytracker-docs/
+docs-privacytracker/
 ├── docs.json                          Mintlify site config (theme, navigation, OpenAPI wiring)
 ├── package.json                       Local docs scripts (check, dev, sync-changelog, linkcheck)
 ├── README.md                          (this file)
