@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "npx --yes mint dev",
+    "build": "npx --yes mint@latest export && rm -rf dist && mkdir -p dist && (unzip -q -o export.zip -d dist || python3 -m zipfile -e export.zip dist) && cp .assetsignore dist/.assetsignore",
     "check": "node scripts/check-docs.mjs",
     "sync-changelog": "node scripts/sync-changelog.mjs",
     "linkcheck": "lychee --base . './**/*.mdx' './**/*.md'"
