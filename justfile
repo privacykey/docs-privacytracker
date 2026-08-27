@@ -21,11 +21,9 @@ sync-changelog:
 # Build the Mintlify static export into dist/
 [group("deploy")]
 export:
-    npx --yes mint@latest export
-    rm -rf dist
-    unzip -q export.zip -d dist
+    npm run build
 
 # Deploy the docs site to Cloudflare
 [group("deploy")]
 deploy: export
-    npx --yes wrangler@latest deploy --assets dist --name docs-privacytracker --compatibility-date 2026-05-01
+    npx --yes wrangler@latest deploy

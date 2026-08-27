@@ -5,9 +5,9 @@ Thanks for helping make the docs better. This file is for **contributing to the 
 ## Quick start
 
 ```bash
-# 1. Fork github.com/privacykey/privacytracker-docs and clone your fork
-git clone git@github.com:<your-username>/privacytracker-docs.git
-cd privacytracker-docs
+# 1. Fork github.com/privacykey/docs-privacytracker and clone your fork
+git clone git@github.com:<your-username>/docs-privacytracker.git
+cd docs-privacytracker
 
 # 2. Run the smoke check to confirm a clean baseline
 npm run check
@@ -200,13 +200,13 @@ If you're reviewing someone else's docs PR, the checklist is:
 - Does it cross-link instead of duplicating? Existing pages should be referenced rather than re-written.
 - Are anchors stable? Renaming a heading breaks every inbound link.
 - Does it pass `npm run check`?
-- Mintlify preview link rendering OK? (The Mintlify GitHub App posts a preview URL on every PR once the repo is connected.)
+- Does the page render? Run `npm run dev` locally, or check the preview URL Workers Builds uploads for the branch once the repo is connected.
 
 ## Reporting issues vs. opening PRs
 
 Bug reports are valuable on their own — you don't have to fix what you found.
 
-- **Documentation bugs (typos, stale info, broken links the cron missed):** open an issue at [github.com/privacykey/privacytracker-docs/issues](https://github.com/privacykey/privacytracker-docs/issues) or click the *Suggest edits* link in the docs page footer (Mintlify renders this when feedback is enabled in `docs.json`).
+- **Documentation bugs (typos, stale info, broken links the cron missed):** open an issue at [github.com/privacykey/docs-privacytracker/issues](https://github.com/privacykey/docs-privacytracker/issues) or click the *Suggest edits* link in the docs page footer (Mintlify renders this when feedback is enabled in `docs.json`).
 - **App bugs:** open an issue at [github.com/privacykey/privacytracker/issues](https://github.com/privacykey/privacytracker/issues) instead — different repo.
 - **Security findings:** never in a public issue. Use [GitHub Private Vulnerability Reporting](https://github.com/privacykey/privacytracker/security/advisories/new) on the main repo. The docs site's source rarely contains anything security-sensitive (it's all public copy), but if you find that the docs claim something about the app's security posture that isn't actually true, that's worth reporting privately so the fix to the app and the docs can land together.
 

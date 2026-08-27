@@ -43,6 +43,16 @@ jobs:
           key: cache-lychee-${{ github.sha }}
           restore-keys: cache-lychee-
 
+      # External links only (--scheme): internal links and anchors are covered by
+      # `npm run check` above, and extensionless Mintlify paths are not files.
+      # `--base .` is rejected by current lychee (base must be a URL or absolute
+      # path); --root-dir resolves root-relative links instead.
+      # dash.cloudflare.com bot-blocks CI with 403 — excluded rather than accepting
+      # 403 globally, which would mask genuinely forbidden links.
+      # localhost/loopback URLs are documentation examples, not live links.
+      # Generous timeout/retries: lychee exits non-zero on a timeout as well as a
+      # broken link, so a slow third-party host would otherwise block every PR.
+      # docs.[a-z]+.privacykey.org: no docs domain has DNS yet; drop this exclusion once they resolve
       - name: Run lychee
         uses: lycheeverse/lychee-action@v2
         with:
@@ -50,9 +60,18 @@ jobs:
             --cache
             --max-cache-age 1d
             --no-progress
-            --base .
+            --timeout 30
+            --max-retries 5
+            --retry-wait-time 3
+            --scheme https
+            --scheme http
+            --root-dir ${{ github.workspace }}
             --exclude-path images
             --exclude-path .github
+            --exclude-loopback
+            --exclude 'localhost'
+            --exclude 'dash\.cloudflare\.com'
+            --exclude 'docs\.[a-z]+\.privacykey\.org'
             --accept 200,206,429
             './**/*.mdx'
             './**/*.md'
