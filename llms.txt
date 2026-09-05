@@ -1,0 +1,68 @@
+# privacytracker documentation
+
+> Track how iOS apps' App Store privacy labels change over time, summarise developer privacy policies with AI, and back-fill history from the Internet Archive.
+
+This file indexes the privacytracker documentation site at https://docs.privacytracker.privacykey.org. Every page listed below is also served as plain Markdown at the same URL with `.md` appended, and the whole site is concatenated into one Markdown file at https://docs.privacytracker.privacykey.org/llms-full.txt.
+
+Site notice: These docs were drafted with AI assistance and may contain inaccuracies — **verify before following any instruction**. [More about these docs →](https://docs.privacytracker.privacykey.org/about-these-docs)
+
+## Self-Host / Get Started
+
+- [Introduction](https://docs.privacytracker.privacykey.org/introduction.md): privacytracker tracks how iOS apps' App Store privacy labels change over time, summarises developer privacy policies with AI, and back-fills history from the Internet Archive.
+- [privacytracker vs alternatives](https://docs.privacytracker.privacykey.org/alternatives.md): An evenhanded look at privacytracker, the things it overlaps with (Apple's labels and Privacy Report, ToS;DR, PrivacySpy, Exodus Privacy), and when each is the better fit.
+- [Quickstart](https://docs.privacytracker.privacykey.org/quickstart.md): Install privacytracker and import your first apps in about five minutes — no source build required.
+- [Installation](https://docs.privacytracker.privacykey.org/installation.md): Detailed install paths for self-hosters — signed desktop app, Homebrew cask, or Docker.
+- [Configuration](https://docs.privacytracker.privacykey.org/configuration.md): AI providers, environment variables, background sync, Wayback import, and the admin token.
+- [Devices](https://docs.privacytracker.privacykey.org/devices.md): Tracking apps across more than one iPhone or iPad — re-sync, orphan handling, and the Apple Configurator actions.
+
+## Self-Host / Recipes
+
+- [Use cases](https://docs.privacytracker.privacykey.org/cookbook.md): Five end-to-end walkthroughs showing how privacytracker actually gets used — kid's iPad, app comparison, household NAS, regulator audit prep, partner privacy review.
+
+## Self-Host / Operate
+
+- [Performance & sizing](https://docs.privacytracker.privacykey.org/performance-and-sizing.md): Disk per year of label history, RAM/CPU footprint, soft scaling limits, Apple rate-limit math — what to expect before you commit hardware.
+- [Backup & restore](https://docs.privacytracker.privacykey.org/backup-and-restore.md): How to back up your privacytracker data, restore it, and migrate between install paths.
+- [Security & trust](https://docs.privacytracker.privacykey.org/security.md): What privacytracker protects against, what data leaves your device, the access-control layers, and how to report a vulnerability.
+- [Hardening](https://docs.privacytracker.privacykey.org/hardening.md): Lock down a self-hosted privacytracker before exposing it beyond localhost — TLS, admin token, dev-endpoint lockout, audit-log cadence, off-host backups.
+- [Upgrading](https://docs.privacytracker.privacykey.org/upgrading.md): What to expect when you upgrade privacytracker — what runs automatically on boot, what to check manually, how to roll back.
+- [Troubleshooting](https://docs.privacytracker.privacykey.org/troubleshooting.md): Common issues self-hosters hit, with diagnostics and fixes.
+
+## Self-Host / Help
+
+- [FAQ](https://docs.privacytracker.privacykey.org/faq.md): Common questions about what privacytracker is, what it isn't, and how it handles your data.
+- [Glossary](https://docs.privacytracker.privacykey.org/glossary.md): Domain terms used across privacytracker — what they mean and where they appear in the code.
+- [Changelog](https://docs.privacytracker.privacykey.org/changelog.md): Notable changes to privacytracker, version by version.
+- [About these docs](https://docs.privacytracker.privacykey.org/about-these-docs.md): These docs were drafted with AI assistance. Here's what that means, what we double-check, and what you should verify before following any instructions.
+
+## Develop / Build privacytracker
+
+- [Develop](https://docs.privacytracker.privacykey.org/develop/overview.md): Build privacytracker from source, understand the architecture, and contribute changes back.
+- [Build from source](https://docs.privacytracker.privacykey.org/develop/build-from-source.md): Clone the repo, install Node 24, and run privacytracker from a checkout.
+- [Scripts](https://docs.privacytracker.privacykey.org/develop/scripts.md): Utility scripts that contributors may run from a privacytracker source checkout.
+- [Contributing](https://docs.privacytracker.privacykey.org/develop/contributing.md): How to pick an issue, run the tests that matter, and open a PR that merges quickly.
+
+## Develop / How it works
+
+- [Architecture](https://docs.privacytracker.privacykey.org/develop/architecture.md): Codebase shape, data flow, three crash-safe runners, and the database model.
+- [Feature flags](https://docs.privacytracker.privacykey.org/develop/feature-flags.md): The focus model — audience × goals × accessibility — and how it drives every user-facing surface.
+- [Tauri & sidecar](https://docs.privacytracker.privacykey.org/develop/tauri.md): How the desktop app wraps the Next.js bundle, the sidecar Node runtime, and the ed25519-verified update flow.
+- [Translations](https://docs.privacytracker.privacykey.org/develop/translations.md): Crowdin + next-intl workflow — how strings flow from en.json to every other locale.
+
+## Develop / Docs site itself
+
+- [Translating the docs](https://docs.privacytracker.privacykey.org/develop/translating-the-docs.md): How to add a new language to this docs site, what needs translating, and how the structure mirrors next-intl in the main app.
+- [Versioned docs](https://docs.privacytracker.privacykey.org/develop/versioning.md): How privacytracker versions its docs site, when to cut a new version, and the steps to add one in Mintlify.
+
+## API Reference / Overview
+
+- [API overview](https://docs.privacytracker.privacykey.org/api-reference/introduction.md): How to call the privacytracker HTTP API — authentication, conventions, and where to find the interactive playground.
+
+## API Reference / Reference
+
+- [privacytracker API OpenAPI specification](https://docs.privacytracker.privacykey.org/api-reference/openapi.yaml): 89 operations, the HTTP API as an OpenAPI document
+
+## Optional
+
+- [privacytracker source code](https://github.com/privacykey/privacytracker): the product these docs describe
+- [Documentation source](https://github.com/privacykey/docs-privacytracker): the repository this site is built from

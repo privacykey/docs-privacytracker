@@ -40,9 +40,12 @@ docs-privacytracker/
 ├── CONTRIBUTING.md                    How to propose and structure doc changes
 ├── LICENSE                            Apache-2.0
 ├── .gitignore
+├── llms.txt                           AI-readable index of every page (generated, committed)
+├── llms-full.txt                      The whole site as one Markdown file (generated, committed)
 ├── scripts/
 │   ├── check-docs.mjs                 Local smoke check for navigation, internal links, anchors, assets
-│   └── sync-changelog.mjs             Pulls the main repo's CHANGELOG.md into changelog.mdx
+│   ├── sync-changelog.mjs             Pulls the main repo's CHANGELOG.md into changelog.mdx
+│   └── build-llms.mjs                 Generates llms.txt, llms-full.txt, and per-page Markdown
 │
 ├── introduction.mdx                   Self-Host · Get Started: landing page
 ├── alternatives.mdx                   Self-Host · Get Started: how privacytracker compares
@@ -96,9 +99,16 @@ docs-privacytracker/
 - After adding a new page, register it under `navigation.tabs[*].groups[*].pages` in `docs.json`. Pages not listed there are reachable by URL but absent from the sidebar.
 - Internal links use the page slug without `.mdx` (e.g. `/develop/architecture`).
 - Run `npm run check` before opening a PR; it catches missing sidebar pages, broken internal links, missing anchors, missing assets, and a missing / malformed OpenAPI file.
+- Run `npm run llms` after editing a page and commit the regenerated `llms.txt` and `llms-full.txt`; `npm run check` fails when they are out of date.
 - Keep self-hoster pages free of `lib/*` filenames and code-internal jargon. If a page assumes a source checkout, it belongs under `develop/`.
 - Architecture diagrams use Mintlify's native Mermaid support — fenced \`\`\`mermaid blocks render as SVG.
 - The API Reference's per-endpoint pages are auto-generated from `api-reference/openapi.yaml`. Edit the spec, not the pages — they're regenerated on every build.
+
+## AI-readable copies
+
+The site follows the [llms.txt](https://llmstxt.org) convention. `llms.txt` at the repository root indexes every page with its one-line description, and `llms-full.txt` is the whole site as one Markdown file, including a method-by-method table of the API. Both are committed, so they read fine straight from GitHub, and both are served from the site root. The build also writes every page as plain Markdown beside its HTML, so appending `.md` to any page URL returns the Markdown, and copies `api-reference/openapi.yaml` so the raw spec is served too.
+
+`scripts/build-llms.mjs` generates all of it from `docs.json`, each page's frontmatter, and the OpenAPI file, using only Node built-ins. Run `npm run llms` after editing a page and commit the result; `npm run check` fails when the committed copies are out of date, and `sync-changelog.yml` regenerates them itself.
 
 ## CI
 

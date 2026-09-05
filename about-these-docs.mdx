@@ -66,6 +66,16 @@ Three options, in order of preference:
 
 Security-sensitive corrections (the docs claim something about the security posture that isn't true) follow [SECURITY.md](https://github.com/privacykey/privacytracker/blob/main/.github/SECURITY.md) — never a public issue.
 
+## Reading these docs with an AI assistant
+
+This site follows the [llms.txt](https://llmstxt.org) convention, so you can hand it to whichever assistant you use and ask it to walk you through an install, a recipe, or an API call:
+
+- `/llms.txt` is an index of every page with its one-line summary.
+- `/llms-full.txt` is the whole site in one Markdown file, including a method-by-method table of the API — the thing to paste in when you want the assistant to have everything.
+- Appending `.md` to any page's URL returns that page as plain Markdown, and `/api-reference/openapi.yaml` is the raw OpenAPI spec.
+
+Both files are generated from these pages, so everything above about verifying before you act applies to them just as much. An assistant reading them inherits the same mistakes.
+
 ## Where this lands in practice
 
 - The banner at the top of every page is dismissible. Dismissing it for your session doesn't dismiss it for anyone else.
