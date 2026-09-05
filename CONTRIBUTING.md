@@ -18,6 +18,7 @@ npm run dev      # → http://localhost:3000
 # 4. Branch + edit + check + commit + push + PR
 git checkout -b docs/<short-description>
 # … edit MDX …
+npm run llms
 npm run check
 git commit -am "docs: <what you changed>"
 git push origin HEAD
@@ -189,7 +190,7 @@ When you swap a placeholder for a real screenshot:
 - **One concept per PR.** A typo fix and a structural reorganisation should be two PRs, not one. Smaller PRs review faster.
 - **Branch names:** `docs/<short-description>` (e.g. `docs/security-page`, `docs/fix-troubleshooting-typo`).
 - **Commit messages:** start with `docs:` for content, `chore:` for tooling, `fix:` for bug fixes in scripts. Keep the subject under 72 chars.
-- **Run `npm run check` before pushing.** CI runs the same script; failing locally first saves a round trip.
+- **Run `npm run llms`, then `npm run check`, before pushing.** CI runs the same check; failing locally first saves a round trip.
 - **Preview your changes.** `npm run dev` and click through every page you touched, plus any page that links to a section you renamed.
 
 ## Reviewing PRs

@@ -27,6 +27,9 @@ jobs:
       - name: Sync changelog from main repo
         run: npm run sync-changelog
 
+      - name: Regenerate llms.txt and llms-full.txt from the new changelog
+        run: npm run llms
+
       - name: Re-run smoke check on new state
         run: npm run check
 
@@ -41,6 +44,8 @@ jobs:
           body: |
             Automated sync of `changelog.mdx` from
             [`privacykey/privacytracker@main`](https://github.com/privacykey/privacytracker/blob/main/CHANGELOG.md).
+
+            `llms.txt` and `llms-full.txt` are regenerated in the same commit so the AI-readable copy of the site stays in step.
 
             Run by `.github/workflows/sync-changelog.yml` (daily cron at 12:00 UTC, or manual `workflow_dispatch`).
 

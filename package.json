@@ -3,10 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "homepage": "https://docs.privacytracker.privacykey.org",
+  "repository": "https://github.com/privacykey/docs-privacytracker",
   "scripts": {
     "dev": "npx --yes mint dev",
-    "build": "npx --yes mint@latest export && rm -rf dist && mkdir -p dist && (unzip -q -o export.zip -d dist || python3 -m zipfile -e export.zip dist) && cp .assetsignore dist/.assetsignore",
-    "check": "node scripts/check-docs.mjs",
+    "build": "rm -rf dist export.zip && npx --yes mint@latest export && mkdir -p dist && (unzip -q -o export.zip -d dist || python3 -m zipfile -e export.zip dist) && cp .assetsignore dist/.assetsignore && node scripts/build-llms.mjs --dist dist",
+    "check": "node scripts/check-docs.mjs && node scripts/build-llms.mjs --check",
+    "llms": "node scripts/build-llms.mjs",
     "sync-changelog": "node scripts/sync-changelog.mjs",
     "linkcheck": "lychee --no-progress --accept-timeouts --accept '100..=103,200..=299,429' --root-dir \"$PWD\" --scheme https --scheme http --exclude-loopback --exclude 'localhost' --exclude 'dash\\.cloudflare\\.com' --exclude 'docs\\.([a-z0-9-]+\\.)?privacykey\\.org' --exclude-path images --exclude-path .github './**/*.mdx' './**/*.md'"
   },

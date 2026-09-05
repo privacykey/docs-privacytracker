@@ -1,0 +1,3 @@
+# Build output. A stale export must not be picked up as pages or copied into the next export.
+dist/
+export.zip
