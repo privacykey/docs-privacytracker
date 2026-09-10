@@ -3782,7 +3782,7 @@ Source: https://docs.privacytracker.privacykey.org/develop/feature-flags
 
 The focus model — audience × goals × accessibility — and how it drives every user-facing surface.
 
-Every user-facing surface in privacytracker is gated by the **focus system**: a layered resolver that takes the user's chosen audience and goals and produces a per-flag value that components consume via `useFlag()` or `resolveFlag()`.
+Every user-facing surface in privacytracker is gated by the **focus system**: a layered resolver that takes the user's chosen audience and goals and produces a per-flag value. Server code reads it with `resolveFlagFromDb()`; client components read the same resolved values over `GET /api/feature-flags` (see [Reading a flag from a client component](#reading-a-flag-from-a-client-component)).
 
 This page is the ergonomic summary. The full inventory and rollout reasoning live on the [privacytracker Plane board](https://sites.plane.so/issues/39b6604351894f09a5e903acce37d265).
 
@@ -3790,13 +3790,12 @@ This page is the ergonomic summary. The full inventory and rollout reasoning liv
 
 Next 16 will refuse to build if these get tangled. Don't break the layering.
 
-The five modules that carry the resolver:
+The four modules that carry the resolver:
 
 | Module | Role | Constraint |
 |---|---|---|
 | `lib/feature-flag-rules.ts` | Sparse rule tables: `HARD_DEFAULTS`, `AUDIENCE_RULES`, `GOAL_RULES`, `ACCESSIBILITY_RULES`, `FLAG_DEPENDENCIES`, `TOUR_STEPS` | Pure data + helpers. Server-safe. |
 | `lib/feature-flags.ts` | Resolver (`resolveFlag`, `setResolverContext`), override mutators, cache accessors | Server-safe. **No React imports.** |
-| `lib/feature-flags-hooks.ts` | `useFlag`, `useFocus` via `useSyncExternalStore` | `'use client'` only. Importing this from a Server Component fails the build. |
 | `lib/feature-flags-server.ts` | `getResolverContextFromDb`, `resolveFlagFromDb` | `'server-only'`. |
 | `lib/feature-flag-storage.ts` | SQLite reads/writes via better-sqlite3 | All synchronous. |
 
@@ -3807,6 +3806,47 @@ affects resolution — nothing in the app branches on them:
 |---|---|
 | `lib/feature-flag-usage.ts` | Curated map of where each flag lives in the codebase and which route shows its effect. Powers the panel's hover-preview and its "Show me where" link. Deliberately partial — unlisted flags fall through to "no preview available". |
 | `lib/feature-flag-wired.ts` | The set of flags actually consumed by component code today. The panel badges everything outside it "(no effect yet)", so a tester can tell a live toggle from an inert one. |
+
+## Reading a flag from a client component
+
+Client components never touch the resolver. They read resolved values from
+`GET /api/feature-flags` through `lib/use-flag-bundle.ts` — one shared,
+cached fetch per page load however many components ask for a flag.
+
+> **Warning**
+>
+> There used to be a fifth module, `lib/feature-flags-hooks.ts`, exporting
+> `useFlag` / `useFocus` over `useSyncExternalStore`. It was deleted, not
+> deprecated. Those hooks resolved against an in-memory context that
+> **nothing primes in the browser** — and since every page became a static
+> client shell there is no per-request server render left that could. Each
+> call fell through to `HARD_DEFAULTS[key]`, so the component ignored the
+> user's focus *and* their overrides while typechecking perfectly. If you
+> find that import in a branch, it predates the removal.
+
+Pick the hook by what a wrong first paint costs:
+
+| Hook | While loading / on failure | Use for |
+|---|---|---|
+| `useFlagBundle`, `useFlagValues`, `useResolvedFlag` | `null`, then fails **closed** | Gates where rendering the surface wrongly is the bug — label hints, tooltips, the social-share modal, `RequireFlagGate`. Hold render rather than paint and retract. |
+| `useFlagValuesWithDefaults` | Seeds `HARD_DEFAULTS`, never `null`, keeps them on a failed read | Inline section gates (`{flagOn && <section/>}`) whose default is `on` and whose rules only subtract — most of Settings. |
+
+The split matters on the failure path, not the first paint: `AppChrome`
+already holds the whole tree until the bundle settles, but it renders
+anyway when the bundle cannot be *read* (its own chrome flags fail open).
+A fail-closed read there would hand the user a Settings page with every
+card missing.
+
+> **Note**
+>
+> `useFlagValues` and `useFlagValuesWithDefaults` return **raw** values.
+> Use them for any flag that can be `'collapsed'` — a boolean hook reads
+> `'collapsed'` as off, which silently hides a surface whose *default* is
+> "visible but not expanded".
+
+`tests/app/client-flag-reads.test.ts` in the app repo fails the build if
+the deleted hooks return, if a client module imports the resolver, or if a
+tri-state flag is read through a boolean hook.
 
 ## Flag-key convention
 
