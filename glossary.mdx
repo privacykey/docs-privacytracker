@@ -87,6 +87,16 @@ A short reference for terms that show up across the app, the API, and the codeba
 
 **Shortlist.** A user-curated set of apps you want to keep an eye on without installing. Separate from tracked apps; you can shortlist an app you've never installed.
 
+## Devices
+
+**Device.** A phone or tablet you've imported apps from. Keyed on its ECID when the import carries one, so re-importing the same device updates its row. See [Devices](/devices).
+
+**Device menu.** The selector at the top of every page that decides which devices' apps privacytracker shows — one, several, or all. Every library read opts into it with a `devices` query parameter. A view, not an access boundary.
+
+**Device owner.** Who a device belongs to — a free-text name plus `self`, `loved_one` or `guardian`. Never inferred. When recorded, the uninstall gate requires it to match your audience.
+
+**Permission confirmation.** Your recorded statement that you have the owner's permission to view and act on someone else's device. Timestamped, written to the audit log, and required before privacytracker removes apps from that device.
+
 ## Distribution and runtime
 
 **Tauri.** The Rust framework that wraps the Next.js bundle as a signed, notarized desktop app on macOS. Uses Tauri's updater with ed25519 signature verification.

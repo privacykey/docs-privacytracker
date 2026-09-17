@@ -850,6 +850,10 @@ paths:
         the presence of `limit` switches the response to an
         `{ apps, total, limit, offset }` envelope. Pages are ordered by app
         name (then id), so `offset` paging is deterministic across requests.
+
+        Pass `devices` to restrict any list form to apps on particular
+        devices. Without it the response always covers the whole library,
+        whatever device is picked in the app's device menu.
       parameters:
         - in: query
           name: limit
@@ -886,6 +890,20 @@ paths:
             type: string
             enum: [grouped]
           description: Returns the grouped privacy view used by dashboards.
+        - in: query
+          name: devices
+          schema:
+            type: string
+          description: |
+            Restricts every list form — the bare array, the paginated
+            envelope, and `view=grouped` — to apps on the given devices: a
+            comma-separated list of device IDs, optionally including
+            `unattached` for apps linked to no device, or `all`. In the
+            envelope, `total` counts the restricted set and pages are drawn
+            from it, so `offset` paging stays consistent. Opt-in: omitting it
+            always returns the whole library. IDs that don't match a device
+            are ignored; if nothing matches, the whole library is returned.
+            See [Devices](/devices).
       responses:
         "200":
           description: |
