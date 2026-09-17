@@ -705,11 +705,11 @@ pnpm lint:i18n   # check key parity against en.json
 # Devices
 Source: https://docs.privacytracker.privacykey.org/devices
 
-Tracking apps across more than one iPhone or iPad — re-sync, orphan handling, and the Apple Configurator actions.
+Tracking apps across more than one iPhone or iPad — the device menu, whose device is whose, re-sync, orphan handling, and the Apple Configurator actions.
 
 Most people track one phone. If you track more than one — your own plus a
-partner's, or a couple of the kids' — privacytracker keeps a row per device and
-remembers which apps came from where.
+partner's, or a couple of the kids' — privacytracker keeps a row per device,
+remembers which apps came from where, and lets you record whose each device is.
 
 Devices are created by the **import** flow, not by hand. Whenever you import an
 app list, privacytracker either matches an existing device or creates a new one.
@@ -725,14 +725,80 @@ rename once you know which phone they came from.
 > **Settings → Devices** isn't in your sidebar, that flag is off for your
 > current focus — see [Feature flags](https://docs.privacytracker.privacykey.org/develop/feature-flags).
 
+## The device menu
+
+The device menu at the top of every page shows whose apps you're looking at —
+the device's icon and name, or **All devices**. Open it to pick one device, any
+combination, or everything. Apps that aren't linked to any device, such as ones
+you added by hand, have their own **Not tied to a device** entry.
+
+The choice applies everywhere: the apps list, the dashboard's counts, Stats, the
+Privacy Map, the shortlist and the review list all follow it, and it's remembered
+between visits. When devices have owners recorded, the menu groups them under
+each person's name. On a narrow screen it moves into the navigation drawer.
+
+Bulk actions on the apps list follow it too, and name what they'll act on —
+**Sync Mum's iPad** rather than **Sync All**.
+
+Exports don't follow it. The CSV and JSON downloads, the shortlist export, the
+audit bundle and database backups always cover every device, because whoever
+opens an exported file can't tell a partial one from a complete one. While a
+device is picked, each export control tells you so. Background maintenance in
+Settings — the scheduled App Store sync, the Wayback backfill and the policy
+sync — also runs across the whole library.
+
+> **Note**
+>
+> The device menu is a view, not an access boundary. Anyone who can open
+> privacytracker can pick any device. If family members' data needs keeping
+> apart, run [separate instances](https://docs.privacytracker.privacykey.org/security#runtime-and-database-boundaries).
+
+The menu is controlled by `flag.nav.device_scope` (on by default) and appears
+once you've imported at least one device.
+
+## Whose device is it
+
+Each device can record who it belongs to: a name, such as *Mum* or *Leo*, and
+whether it's **yours**, **someone you're helping**, or **a child you look
+after**. privacytracker never guesses this from the device's name — it stays
+blank until you say.
+
+You set it in two places. From your second device onward, importing a new device
+asks **Whose device is this?**, pre-selected from how you're set up, so your own
+iPad is a single click. Your first device isn't asked. For any device, the owner
+editor on **Settings → Devices** sets or changes it.
+
+### Confirming you have permission
+
+When a device belongs to someone else, you're also asked to confirm you have
+their permission — to view the apps on their device, and to remove apps from it
+if you decide to together. For a child's device, you confirm that you're
+responsible for the child and their device. Importing someone else's device
+won't continue until you tick it.
+
+The confirmation is recorded with the time you gave it. Setting the device's
+owner back to yourself, or clearing it, removes the confirmation, so a later
+change of owner never inherits an old one.
+
+### When the menu suggests switching mode
+
+If you pick a device whose owner doesn't match how you're set up — a relative's
+iPad while you're working on your own apps, for instance — the menu explains the
+mismatch, says what switching would turn on, and offers to switch. It never
+switches for you, and **Stay as I am** dismisses it. Only the mode changes; your
+goals are kept.
+
 ## The Devices page
 
 **Settings → Devices** (`/dashboard/settings/devices`) lists one row per device
-with its app count. Each row can be renamed, deleted, or re-synced.
+with its app count. Each row can be renamed, given an owner, deleted, or
+re-synced, and shows **permission confirmed** once you've confirmed it for
+someone else's device.
 
 Per device, privacytracker stores a name, the ECID if it has one, the model,
-device class and iOS version reported at import, when it was created, and when
-it last synced.
+device class and iOS version reported at import, when it was created, when it
+last synced, and — once you've recorded them — its owner and when you confirmed
+permission.
 
 Elsewhere in the app, an app's detail page shows a **Tracked on** row of device
 chips, and an "Installed on *N* devices" panel that links back here.
@@ -784,17 +850,25 @@ permitted and to write the audit record.
 
 ### What has to be true first
 
-Uninstall is guarded three ways, and all three must pass:
+Uninstall is guarded four ways, and all four must pass:
 
 | Gate | Requirement |
 |---|---|
-| Audience | Your active focus must be **self**. Loved-one and guardian audiences can build an uninstall list but cannot execute it. |
+| Device owner | The device's recorded owner must match how you're set up: your own device while you're working on your own apps (`self`), theirs while you're helping someone (`loved_one`), a child's while you're looking after a child (`guardian`). A device with no recorded owner keeps the original rule — you must be set up as `self`. |
+| Permission | For anyone else's device, you must have [confirmed you have their permission](#confirming-you-have-permission), at import or on **Settings → Devices**. |
 | Flag | `flag.devopts.cfgutil_uninstall` must be `on`. It is **off by default**. |
-| Backup freshness | A successful backup of that device within the last 24 hours. Per-call opt-out exists, but the audience and flag gates do not bend. |
+| Backup freshness | A successful backup of that device within the last 24 hours. The per-call opt-out relaxes this requirement only — never ownership, permission or the flag. |
 
-The audience gate is the important one. It means privacytracker will not let
-someone in guardian mode remotely remove apps from the device they're
-supervising — the tool reports, it doesn't reach across and act.
+None of this happens at a distance. The device has to be connected to this Mac
+by cable, unlocked, and trusting the computer, and every app removal asks for
+Touch ID or your password on the Mac. The ownership and permission gates make
+the rest explicit: whose device it is, and that you're allowed to act on it.
+
+When a gate refuses, the message names the device — and its owner, where one is
+recorded — rather than citing a rule. On the review page, the removal steps
+appear while you're set up as `self`, or once the device menu is narrowed to one
+person's devices and their type matches how you're set up. If the device has no
+owner recorded yet, the review page points you to **Settings → Devices**.
 
 ### The audit trail
 
@@ -802,19 +876,51 @@ Every attempt writes an activity row — `cfgutil_backup` or `cfgutil_uninstall`
 whether or not it succeeded. Those rows are visible in the Developer Options
 activity log and travel with your [audit bundle](https://docs.privacytracker.privacykey.org/backup-and-restore).
 
+Confirming permission for a device is recorded separately, in the
+[audit log](https://docs.privacytracker.privacykey.org/security#audit-log), as `devices.permission_acknowledged`.
+
 ## API reference
 
 | Endpoint | Methods | Purpose |
 |---|---|---|
-| `/api/devices` | `GET`, `POST` | List devices; create one |
-| `/api/devices/{id}` | `GET`, `PATCH`, `DELETE` | Fetch, rename, delete |
+| `/api/devices` | `GET`, `POST` | List devices; create one, optionally with its owner |
+| `/api/devices/{id}` | `GET`, `PATCH`, `DELETE` | Fetch; rename, set the owner, confirm or withdraw permission; delete |
 | `/api/devices/{id}/bundles` | `GET` | Bundle IDs seen on this device |
 | `/api/devices/{id}/tracked-apps` | `GET` | Apps currently linked to it |
 | `/api/devices/for-app/{appId}` | `GET` | Which devices an app sits on |
+| `/api/device-scope` | `GET`, `PUT`, `DELETE` | Read, save or reset the device menu's selection |
 | `/api/device-sync/preview` | `POST` | Diff without writing |
 | `/api/device-sync/commit` | `POST` | Apply the ticked subset |
 | `/api/device-actions/backup` | `POST` | Record a completed `cfgutil` backup |
 | `/api/device-actions/uninstall` | `GET`, `POST` | Check the gates; record the attempt |
+
+`POST /api/devices` and `PATCH /api/devices/{id}` accept `ownerLabel` (a string,
+or `null` to clear), `ownerAudience` (`self`, `loved_one`, `guardian`, or `null`),
+and `permissionAcknowledged` (`true` records the confirmation now, `false`
+withdraws it). A confirmation is only stored for a device owned by someone else.
+When the uninstall gate refuses on ownership, its `reason` is `device_owner` or
+`permission_unacknowledged`.
+
+`GET /api/device-scope` returns the saved selection together with the device list
+it was checked against. `PUT` takes `{ scope }` and returns the selection as saved
+— IDs of devices that no longer exist are dropped, and a selection naming every
+device plus unattached apps is stored as **All devices**.
+
+### Reading one device's apps
+
+Library reads accept an optional `devices` query parameter: `/api/apps` (every
+list form), `/api/triage`, `/api/stats`, `/api/review-queue`, `/api/shortlist`
+and `/api/privacy-profile/mismatches`. Pass comma-separated device IDs, include
+`unattached` for apps linked to no device, or pass `all`.
+
+It's opt-in. A request without it returns the whole library whatever is picked in
+the device menu — the menu adds the parameter to its own requests, and nothing
+adds it on your behalf. Device IDs that don't match a device are ignored; if
+nothing matches, you get the whole library.
+
+```bash
+curl "http://localhost:3000/api/apps?limit=100&devices=<device-id>,unattached"
+```
 
 ## Related
 
@@ -1074,6 +1180,10 @@ A complete quarterly history per tracked app from **Q1 2021** forward (about 19 
 **Audience:** `loved_one`. **Goal:** `monitor`. **Install path:** any.
 
 The job: you and a partner (or another household member, or a friend you're helping) want to look at your respective app collections together — comparing notes on what each of you has installed and how concerned you each are about specific apps. You don't want to install another tool on their machine; you want to share a curated bundle they can read.
+
+> **Note**
+>
+> If you'd rather track their device in your own install, record them as its owner — when you import it, or on **Settings → Devices** — and use the [device menu](https://docs.privacytracker.privacykey.org/devices#the-device-menu) to switch between your apps and theirs. Removing apps from their device also asks you to [confirm you have their permission](https://docs.privacytracker.privacykey.org/devices#confirming-you-have-permission).
 
 **Step 1: Set the audience to loved_one**
 
@@ -1677,7 +1787,7 @@ Keeping the token out of `sessionStorage` is the point: an injected script can't
 
 ### Rate limiting
 
-privacytracker rate-limits its own routes. `checkRateLimit()` in `lib/security.ts` is a per-key sliding window, keyed on route prefix plus client IP, applied to 56 of the 110 API routes — 33 calling it directly, 23 more through `requireMutationGuard()`, which also writes a `<action>.rate_limited` audit row. Every denial is a 429, but only some carry `Retry-After`: `requireMutationGuard()` always sets it (`lib/api-guards.ts`), as do a handful of direct callers such as `/api/scrape`, `/api/search`, and the admin-token login. Most routes that call `checkRateLimit()` directly — `/api/settings`, `/api/reset`, `/api/backup/export`, `/api/backup/restore`, `/api/shortlist`, the `/api/manual-apps` family — return a bare 429 with just the error body, so a client that backs off on the header needs a fallback for those. None of it is behind an env var or build mode.
+privacytracker rate-limits its own routes. `checkRateLimit()` in `lib/security.ts` is a per-key sliding window, keyed on route prefix plus client IP, applied to 68 of the 122 API routes — 41 calling it directly, 27 more through `requireMutationGuard()`, which also writes a `<action>.rate_limited` audit row. Every denial is a 429, but only some carry `Retry-After`: `requireMutationGuard()` always sets it (`lib/api-guards.ts`), as do a handful of direct callers such as `/api/scrape`, `/api/search`, and the admin-token login. Most routes that call `checkRateLimit()` directly — `/api/settings`, `/api/reset`, `/api/backup/export`, `/api/backup/restore`, `/api/shortlist`, the `/api/manual-apps` family — return a bare 429 with just the error body, so a client that backs off on the header needs a fallback for those. None of it is behind an env var or build mode.
 
 | Route | Limit |
 |---|---|
@@ -1785,7 +1895,7 @@ When a recipient imports a bundle, they see your annotations attributed to your 
 
 privacytracker is designed as a single-user, local-first tool. **Run only one runtime against a given SQLite database at a time** — a Docker/Node process, *or* the desktop sidecar, not both sharing the same `privacy.db`. SQLite WAL mode handles ordinary contention inside one process, but two app processes writing the same database is outside the supported security and data-integrity model.
 
-If you want to run multiple instances (e.g., one per family member), use **separate `data/` directories** per instance.
+If you want to run multiple instances (e.g., one per family member), use **separate `data/` directories** per instance. The in-app [device menu](https://docs.privacytracker.privacykey.org/devices#the-device-menu) separates family members' devices within one install, but it's a filter, not an access boundary — use separate instances when their data must stay apart.
 
 ## Supported versions
 
@@ -2672,9 +2782,9 @@ There's no in-app spend cap — privacytracker never sees your provider's billin
 
 **Can I run this for my whole family on one server?**
 
-Yes — that's the `audience: guardian` mode. One Docker container or one self-hosted instance can track apps across multiple people's devices; the import flow accepts batched `.txt` / `.csv` files from the [iPhone import helper](https://docs.privacytracker.privacykey.org/installation#iphone-import-helper) so you can ingest a family member's app list in one pass.
+Yes. One Docker container or one self-hosted instance can track apps across several people's devices; the import flow accepts batched `.txt` / `.csv` files from the [iPhone import helper](https://docs.privacytracker.privacykey.org/installation#iphone-import-helper) so you can ingest a family member's app list in one pass. Record whose each device is, and the [device menu](https://docs.privacytracker.privacykey.org/devices#the-device-menu) at the top of every page switches between them — one person's devices, a few, or everyone's.
 
-privacytracker has no built-in user accounts or per-user partitioning — it's a single-user app at the data layer. If you need separate views for different family members, run separate instances (different ports, different `data/` directories) or use the audit-bundle handoff workflow to share a curated subset.
+That's a view, not a wall. privacytracker has no built-in user accounts or per-user partitioning — anyone who can open it can pick any device. If family members' data needs keeping apart, run separate instances (different ports, different `data/` directories) or use the audit-bundle handoff workflow to share a curated subset.
 
 **What happens if Apple breaks the scraper?**
 
@@ -2820,6 +2930,16 @@ A short reference for terms that show up across the app, the API, and the codeba
 **Audit bundle.** A versioned export of apps, labels, AI summaries, and exportable annotations + verdicts, suitable for sharing with a household member or a regulator. `POST /api/export/audit-bundle` allows it when the `flag.settings.admin.export.audit_bundle` flag resolves to `on`, or when `flag.focus.workflow` is `other_handoff`. The `loved_one` audience rule sets that flag to `on`, so picking that audience satisfies the first arm on its own; `self` and `guardian` need the `other_handoff` workflow or an explicit override. Private notes (`visibility = 'private'`) are unconditionally excluded by SQL filter — there is no force-include path.
 
 **Shortlist.** A user-curated set of apps you want to keep an eye on without installing. Separate from tracked apps; you can shortlist an app you've never installed.
+
+## Devices
+
+**Device.** A phone or tablet you've imported apps from. Keyed on its ECID when the import carries one, so re-importing the same device updates its row. See [Devices](https://docs.privacytracker.privacykey.org/devices).
+
+**Device menu.** The selector at the top of every page that decides which devices' apps privacytracker shows — one, several, or all. Every library read opts into it with a `devices` query parameter. A view, not an access boundary.
+
+**Device owner.** Who a device belongs to — a free-text name plus `self`, `loved_one` or `guardian`. Never inferred. When recorded, the uninstall gate requires it to match your audience.
+
+**Permission confirmation.** Your recorded statement that you have the owner's permission to view and act on someone else's device. Timestamped, written to the audit log, and required before privacytracker removes apps from that device.
 
 ## Distribution and runtime
 
@@ -4809,6 +4929,7 @@ The OpenAPI spec covers the public-contract surface — the routes integrators m
 | Notes, verdicts, notifications | `app/api/{annotations,verdicts,notifications}/**/route.ts` |
 | Bulk task status | `app/api/tasks/active/route.ts`, `app/api/{sync,wayback,policy}/**/route.ts` |
 | Stats, charts | `app/api/stats/**/route.ts` |
+| Devices, device menu, device actions | `app/api/{devices,device-scope,device-sync,device-actions}/**/route.ts` |
 | Health, deployment, admin | `app/api/{health,ready,deployment,admin,reset,dev}/**/route.ts` |
 | Admin-token sessions | `app/api/auth/admin-token/{login,logout,status}/route.ts` |
 

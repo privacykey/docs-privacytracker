@@ -13,7 +13,7 @@ Site notice: These docs were drafted with AI assistance and may contain inaccura
 - [Quickstart](https://docs.privacytracker.privacykey.org/quickstart.md): Install privacytracker and import your first apps in about five minutes — no source build required.
 - [Installation](https://docs.privacytracker.privacykey.org/installation.md): Detailed install paths for self-hosters — signed desktop app, Homebrew cask, or Docker.
 - [Configuration](https://docs.privacytracker.privacykey.org/configuration.md): AI providers, environment variables, background sync, Wayback import, and the admin token.
-- [Devices](https://docs.privacytracker.privacykey.org/devices.md): Tracking apps across more than one iPhone or iPad — re-sync, orphan handling, and the Apple Configurator actions.
+- [Devices](https://docs.privacytracker.privacykey.org/devices.md): Tracking apps across more than one iPhone or iPad — the device menu, whose device is whose, re-sync, orphan handling, and the Apple Configurator actions.
 
 ## Self-Host / Recipes
 

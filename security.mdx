@@ -152,7 +152,7 @@ Keeping the token out of `sessionStorage` is the point: an injected script can't
 
 ### Rate limiting
 
-privacytracker rate-limits its own routes. `checkRateLimit()` in `lib/security.ts` is a per-key sliding window, keyed on route prefix plus client IP, applied to 56 of the 110 API routes — 33 calling it directly, 23 more through `requireMutationGuard()`, which also writes a `<action>.rate_limited` audit row. Every denial is a 429, but only some carry `Retry-After`: `requireMutationGuard()` always sets it (`lib/api-guards.ts`), as do a handful of direct callers such as `/api/scrape`, `/api/search`, and the admin-token login. Most routes that call `checkRateLimit()` directly — `/api/settings`, `/api/reset`, `/api/backup/export`, `/api/backup/restore`, `/api/shortlist`, the `/api/manual-apps` family — return a bare 429 with just the error body, so a client that backs off on the header needs a fallback for those. None of it is behind an env var or build mode.
+privacytracker rate-limits its own routes. `checkRateLimit()` in `lib/security.ts` is a per-key sliding window, keyed on route prefix plus client IP, applied to 68 of the 122 API routes — 41 calling it directly, 27 more through `requireMutationGuard()`, which also writes a `<action>.rate_limited` audit row. Every denial is a 429, but only some carry `Retry-After`: `requireMutationGuard()` always sets it (`lib/api-guards.ts`), as do a handful of direct callers such as `/api/scrape`, `/api/search`, and the admin-token login. Most routes that call `checkRateLimit()` directly — `/api/settings`, `/api/reset`, `/api/backup/export`, `/api/backup/restore`, `/api/shortlist`, the `/api/manual-apps` family — return a bare 429 with just the error body, so a client that backs off on the header needs a fallback for those. None of it is behind an env var or build mode.
 
 | Route | Limit |
 |---|---|
@@ -260,7 +260,7 @@ When a recipient imports a bundle, they see your annotations attributed to your 
 
 privacytracker is designed as a single-user, local-first tool. **Run only one runtime against a given SQLite database at a time** — a Docker/Node process, *or* the desktop sidecar, not both sharing the same `privacy.db`. SQLite WAL mode handles ordinary contention inside one process, but two app processes writing the same database is outside the supported security and data-integrity model.
 
-If you want to run multiple instances (e.g., one per family member), use **separate `data/` directories** per instance.
+If you want to run multiple instances (e.g., one per family member), use **separate `data/` directories** per instance. The in-app [device menu](/devices#the-device-menu) separates family members' devices within one install, but it's a filter, not an access boundary — use separate instances when their data must stay apart.
 
 ## Supported versions
 

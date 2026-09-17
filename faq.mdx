@@ -37,9 +37,9 @@ description: "Common questions about what privacytracker is, what it isn't, and 
   </Accordion>
 
   <Accordion title="Can I run this for my whole family on one server?" icon="users">
-    Yes — that's the `audience: guardian` mode. One Docker container or one self-hosted instance can track apps across multiple people's devices; the import flow accepts batched `.txt` / `.csv` files from the [iPhone import helper](/installation#iphone-import-helper) so you can ingest a family member's app list in one pass.
+    Yes. One Docker container or one self-hosted instance can track apps across several people's devices; the import flow accepts batched `.txt` / `.csv` files from the [iPhone import helper](/installation#iphone-import-helper) so you can ingest a family member's app list in one pass. Record whose each device is, and the [device menu](/devices#the-device-menu) at the top of every page switches between them — one person's devices, a few, or everyone's.
 
-    privacytracker has no built-in user accounts or per-user partitioning — it's a single-user app at the data layer. If you need separate views for different family members, run separate instances (different ports, different `data/` directories) or use the audit-bundle handoff workflow to share a curated subset.
+    That's a view, not a wall. privacytracker has no built-in user accounts or per-user partitioning — anyone who can open it can pick any device. If family members' data needs keeping apart, run separate instances (different ports, different `data/` directories) or use the audit-bundle handoff workflow to share a curated subset.
   </Accordion>
 
   <Accordion title="What happens if Apple breaks the scraper?" icon="triangle-exclamation">
