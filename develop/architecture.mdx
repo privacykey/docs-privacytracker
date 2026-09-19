@@ -90,6 +90,10 @@ The two patterns to internalise:
 
 Re-syncs run the same path with `resync=true` — that's what produces change notifications.
 
+The policy step writes a `privacy_snapshots` row to the History timeline on every fetch, through `appendPolicyChangeEntry` in `lib/changelog.ts`. Only a `changed` event can carry `changes_detected = 1` (the column behind the grid's pending dot, the review panel, triage, the universal changelog and the stats) and raise a notification, and only while `flag.notifications.types.policy_updates` is on. It's off by default. `first`, `same` and `error` events are timeline-only, and an unusable body never replaces the stored hash or text.
+
+That notification goes through `createNotification` in `lib/notifications.ts`, which inserts the row and then calls `fireWebhookIfConfigured` for the immediate webhook. App Store changes (privacy labels, accessibility labels, age rating) take a different path to the same call: `commitScrapedAppToDb` in `lib/scraper.ts` writes their bell row in the same commit as the snapshot and calls `fireWebhookIfConfigured` once that commit has landed. Both posts are fire-and-forget, and quiet hours defer only the bell row (`not_before`), never the post. The daily and weekly summaries read the 50 most recent `notifications` rows raised since the previous summary (`maybePostSummaryWebhook` in `lib/notification-webhooks.ts`).
+
 ## The shelf fallback chain
 
 ```mermaid

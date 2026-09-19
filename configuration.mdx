@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: "AI providers, environment variables, background sync, Wayback import, and the admin token."
+description: "AI providers, environment variables, background sync, notifications and webhooks, Wayback import, and the admin token."
 ---
 
 privacytracker stores almost all configuration in the SQLite `app_settings` key/value table, which means most settings are managed through the in-app **Settings** UI rather than `.env` files. Only a few values genuinely need to live outside the database.
@@ -95,6 +95,23 @@ Two knobs:
 
 Apple's 429 handling is built in: the runner bails out of the loop on the first 429, records a `partial` activity row with `rateLimited` totals, and clears state + mutex cleanly so the next 30-minute tick can retry fresh. That's deliberately different from a process kill — 429 is a recoverable condition.
 
+## Notifications
+
+The bell reports privacy-label changes out of the box. Privacy-policy changes are off by default, behind **Privacy policy updates**: the `flag.notifications.types.policy_updates` feature flag.
+
+Every privacy-policy fetch leaves a row on the app's History timeline (the **Change History** tab on its detail page), whatever the flag says. That covers the first capture, an unchanged rescrape, a failed or unusable fetch, and a text change with its diff. Only a text change can go further, and only while the flag is on:
+
+| Privacy policy updates | When a policy's text changed since the last sync |
+|---|---|
+| Off (default) | The change stays on the History timeline with its diff, without a review marker, bell notification or webhook post. |
+| On | The change is also flagged for review (the grid's pending dot, the review panel, triage and the universal changelog) and raises a bell notification, which is also what the [webhook](#notification-webhooks) reads. |
+
+A failed or unusable fetch keeps the last policy text and hash that were actually read, so the next good fetch of the same text reads as unchanged rather than changed. The AI Policy tab's banner for a recently changed policy has its own setting, **Settings → Privacy policies & AI → Privacy Policy Change Alerts**, and shows either way.
+
+To turn policy changes on, tick **Privacy policy updates** under **Settings → Notifications**. Upgrading keeps an override you already had. Without one, an upgraded install takes the default, so its policy events stop showing as changes to review.
+
+Saving that section also clears any override you set under **Settings → Developer Options → Feature flags** on `flag.notifications.types.accessibility_changes` or `flag.notifications.types.new_privacy_types`, because neither has a checkbox there.
+
 ## Notification webhooks
 
 The bell is always on. On top of it, privacytracker can POST notifications to a chat webhook — Slack, Discord, Teams, or any endpoint that accepts JSON. Off by default.
@@ -105,8 +122,12 @@ On the desktop app, the *Keep privacytracker running in the background* wizard s
 |---|---|---|
 | `notification_webhook_url` | a URL, or `''` | Empty disables delivery. Validated with the same SSRF-defended checker as the AI base URL, so private-network destinations are rejected. |
 | `notification_webhook_format` | `slack` / `discord` / `teams` / `generic` | `slack` and `discord` post rendered text; `teams` posts a MessageCard; `generic` posts `{ title, text, notifications[] }`. |
-| `notification_webhook_frequency` | `immediate` / `daily_summary` / `weekly_summary` / `off` | `immediate` fires as each notification lands. The summaries batch unread notifications and are posted from the 30-minute tick once a day or week has elapsed. |
+| `notification_webhook_frequency` | `immediate` / `daily_summary` / `weekly_summary` / `off` | `immediate` (**Each change** in the wizard) posts each App Store or privacy-policy change as soon as it's saved. The summaries post the 50 most recent notifications raised since the previous summary, read or unread, from the 30-minute tick once a day or week has elapsed. |
 | `notification_webhook_last_sent` | epoch ms | Written by the summary tick. Don't set it by hand. |
+
+With `immediate`, a sync or rescrape that finds an app's privacy labels, accessibility labels or age rating changed posts as soon as it has saved the change, with the first change as the headline. A privacy-policy change posts as it's raised, and only while [Privacy policy updates](#notifications) is on. Quiet hours hold back the bell notification, not the post. The bell's other notices, such as resumed runs and finished imports, reach the webhook only through the daily and weekly summaries.
+
+The webhook doesn't apply the bell's per-type filters. A change the bell leaves out, such as an accessibility-label change when your focus doesn't include accessibility, is still posted.
 
 Test a URL before committing to it — this fires a sample payload and writes nothing:
 
