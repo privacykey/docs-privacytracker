@@ -509,7 +509,7 @@ The database is a single SQLite file. Back it up by copying the file (with the a
 # Configuration
 Source: https://docs.privacytracker.privacykey.org/configuration
 
-AI providers, environment variables, background sync, Wayback import, and the admin token.
+AI providers, environment variables, background sync, notifications and webhooks, Wayback import, and the admin token.
 
 privacytracker stores almost all configuration in the SQLite `app_settings` key/value table, which means most settings are managed through the in-app **Settings** UI rather than `.env` files. Only a few values genuinely need to live outside the database.
 
@@ -604,6 +604,25 @@ Two knobs:
 
 Apple's 429 handling is built in: the runner bails out of the loop on the first 429, records a `partial` activity row with `rateLimited` totals, and clears state + mutex cleanly so the next 30-minute tick can retry fresh. That's deliberately different from a process kill — 429 is a recoverable condition.
 
+## Notifications
+
+The bell reports privacy-label changes out of the box. Privacy-policy changes are off by default, behind **Privacy policy updates**: the `flag.notifications.types.policy_updates` feature flag.
+
+Every privacy-policy fetch leaves a row on the app's History timeline (the **Change History** tab on its detail page), whatever the flag says. That covers the first capture, an unchanged rescrape, a failed or unusable fetch, and a text change with its diff. Only a text change can go further, and only while the flag is on:
+
+| Privacy policy updates | When a policy's text changed since the last sync |
+|---|---|
+| Off (default) | The change stays on the History timeline with its diff, without a review marker, bell notification or webhook post. |
+| On | The change is also flagged for review (the grid's pending dot, the review panel, triage and the universal changelog) and raises a bell notification, which is also what the [webhook](#notification-webhooks) reads. |
+
+A failed or unusable fetch keeps the last policy text and hash that were actually read, so the next good fetch of the same text reads as unchanged rather than changed. The AI Policy tab's banner for a recently changed policy has its own setting, **Settings → Privacy policies & AI → Privacy Policy Change Alerts**, and shows either way.
+
+To turn policy changes on, override the flag to **on** under **Settings → Developer Options → Feature flags**. Upgrading keeps an override you already had. Without one, an upgraded install takes the default, so its policy events stop showing as changes to review.
+
+> **Warning**
+>
+> The **Privacy policy updates** checkbox under **Settings → Notifications** doesn't turn this flag on. Saving that section clears the override instead, and the checkbox unticks itself. The bell's list and badge also leave policy notifications out, even with the flag on, though the change still reaches the review panel and the webhook. See [Troubleshooting → Privacy policy updates checkbox unticks itself](https://docs.privacytracker.privacykey.org/troubleshooting#privacy-policy-updates-checkbox-unticks-itself).
+
 ## Notification webhooks
 
 The bell is always on. On top of it, privacytracker can POST notifications to a chat webhook — Slack, Discord, Teams, or any endpoint that accepts JSON. Off by default.
@@ -614,8 +633,10 @@ On the desktop app, the *Keep privacytracker running in the background* wizard s
 |---|---|---|
 | `notification_webhook_url` | a URL, or `''` | Empty disables delivery. Validated with the same SSRF-defended checker as the AI base URL, so private-network destinations are rejected. |
 | `notification_webhook_format` | `slack` / `discord` / `teams` / `generic` | `slack` and `discord` post rendered text; `teams` posts a MessageCard; `generic` posts `{ title, text, notifications[] }`. |
-| `notification_webhook_frequency` | `immediate` / `daily_summary` / `weekly_summary` / `off` | `immediate` fires as each notification lands. The summaries batch unread notifications and are posted from the 30-minute tick once a day or week has elapsed. |
+| `notification_webhook_frequency` | `immediate` / `daily_summary` / `weekly_summary` / `off` | `immediate` posts each privacy-policy change as it's raised. The summaries post the 50 most recent notifications raised since the previous summary, read or unread, from the 30-minute tick once a day or week has elapsed. |
 | `notification_webhook_last_sent` | epoch ms | Written by the summary tick. Don't set it by hand. |
+
+A privacy-policy change only reaches the webhook while [Privacy policy updates](#notifications) is on. Privacy-label changes and the bell's other notices, such as resumed runs, reach it through the daily and weekly summaries, not one at a time. With the default settings, `immediate` has nothing to post.
 
 Test a URL before committing to it — this fires a sample payload and writes nothing:
 
@@ -1696,9 +1717,9 @@ Local providers (Ollama, llama.cpp, LM Studio, vLLM) keep all of this on your ma
 
 If you paste an incoming-webhook URL into the desktop app's *Keep privacytracker running in the background* wizard (or write `notification_webhook_url` through `POST /api/settings` on any build), privacytracker POSTs notifications to that URL. Off by default — an empty URL, or `notification_webhook_frequency = off`, disables it entirely.
 
-The receiving service sees **app names and change summaries** — e.g. *"Instagram: 2 new categories under Data Used to Track You"*. It does not see your annotations, privacy profile, AI keys, or the underlying policy text. Four payload shapes are supported (`slack`, `discord`, `teams`, `generic`); `generic` additionally carries the structured rows under `notifications`.
+The receiving service sees **app names and change summaries**, such as *"Instagram: 2 new categories under Data Used to Track You"*. With [Privacy policy updates](https://docs.privacytracker.privacykey.org/configuration#notifications) on, which it isn't by default, it also learns which apps' privacy policies changed and the host name in each policy's link, as in *"Spotify: Privacy policy text changed at spotify.com."* It does not see your annotations, privacy profile, AI keys, or the underlying policy text. Four payload shapes are supported (`slack`, `discord`, `teams`, `generic`); `generic` additionally carries the structured rows under `notifications`.
 
-Delivery is either immediate (on each new notification) or a daily/weekly batch posted from the 30-minute tick. Requests go out through the same `safeFetch` SSRF, size, and timeout guards as `/api/scrape`. Since this is a third-party chat service, treat it as you would any other outbound integration: pick a private channel.
+Delivery is either immediate or a daily or weekly batch posted from the 30-minute tick. Immediate delivery covers privacy-policy changes; the batches carry the notifications raised since the previous one, privacy-label changes included. Requests go out through the same `safeFetch` SSRF, size, and timeout guards as `/api/scrape`. Since this is a third-party chat service, treat it as you would any other outbound integration: pick a private channel.
 
 privacytracker has **no analytics, no telemetry, no crash reporting** of its own. Beyond the four paths above, the SQLite database, all settings, all your annotations stay on your machine.
 
@@ -2576,6 +2597,23 @@ If `privacyPolicyUrl` is `NULL` and the app's App Store page does have a policy 
 
 **Workaround:** Add the policy URL manually in **Settings → Apps → \<app\> → Edit policy URL**, or open an issue with the App Store URL so the regex can be widened.
 
+## Privacy policy updates checkbox unticks itself
+
+**Symptoms:** You tick **Privacy policy updates** under **Settings → Notifications**, and it unticks itself once the save finishes. A policy whose text changed never gets a review marker or a webhook post.
+
+**Cause:** The Settings view saves its checkboxes under names the feature-flag layer doesn't read. Saving the Notifications section therefore clears the override on `flag.notifications.types.policy_updates` instead of setting it, and the flag falls back to its default of off. The bell has the same mismatch: it can't read the flag's value, so it falls back to its own default and leaves policy notifications out of its list and badge whatever the flag says.
+
+**Diagnose:**
+
+```bash
+curl -s http://localhost:3000/api/notification-prefs
+# {"prefs":{"label_changes":true,"policy_updates":false,...},...}
+```
+
+`policy_updates` is the flag's resolved value. `false` means a policy change stays on the History timeline and goes no further.
+
+**Workaround:** Set the flag directly. In **Settings → Developer Options → Feature flags**, find `flag.notifications.types.policy_updates` and override it to **on**. A policy text change is then flagged for review and reaches the webhook. Don't save the Notifications section afterwards, because any save there clears the override again. The bell still leaves policy notifications out, so watch the review panel or the webhook for them. See [Configuration → Notifications](https://docs.privacytracker.privacykey.org/configuration#notifications) for what the flag controls.
+
 ## Docker container exits immediately
 
 **Symptoms:** `docker compose up` brings the container up, then it dies with exit code 1 within a few seconds.
@@ -2886,6 +2924,8 @@ A short reference for terms that show up across the app, the API, and the codeba
 ## AI and policy
 
 **Policy version.** A captured version of a developer's privacy policy (URL, fetched text, SHA-256 hash, AI summary if generated). Stored in `policy_versions`. Re-summarisation only runs when the hash changes.
+
+**Policy event.** What a privacy-policy fetch records on the app's History timeline: `first` (the first usable capture), `same` (unchanged text), `changed` (new text, diffable against the previous version), or `error` (a failed or unusable fetch). Every fetch records one, as `policy_event` in a `privacy_snapshots` row's change summary. Only `changed` can be flagged for review or raise a notification, and only while `flag.notifications.types.policy_updates` is on. See [Configuration → Notifications](https://docs.privacytracker.privacykey.org/configuration#notifications).
 
 **Lens.** One topic area an AI summary covers. Eight of them, in this order: `collection_scope`, `product_use`, `ads_marketing`, `third_party_sharing`, `tracking_analytics`, `user_controls`, `data_retention`, `children_minors`. Defined in `POLICY_LENSES` in `lib/policy-summary-meta.ts`; the per-lens prompt guidance lives in `POLICY_TOPIC_GUIDES` in `lib/privacy-policy.ts`. Summaries are rebuilt against that list, and keys outside it are discarded — so `summary_json` and the API only ever carry these eight.
 
@@ -3731,6 +3771,10 @@ The two patterns to internalise:
 - **Apple's payload may unwrap two ways.** Always use `Array.isArray(raw) ? raw : raw.data` — Apple ships `{ data: [...], userTokenHash }` sometimes and a bare array other times.
 
 Re-syncs run the same path with `resync=true` — that's what produces change notifications.
+
+The policy step writes a `privacy_snapshots` row to the History timeline on every fetch, through `appendPolicyChangeEntry` in `lib/changelog.ts`. Only a `changed` event can carry `changes_detected = 1` (the column behind the grid's pending dot, the review panel, triage, the universal changelog and the stats) and raise a notification, and only while `flag.notifications.types.policy_updates` is on. It's off by default. `first`, `same` and `error` events are timeline-only, and an unusable body never replaces the stored hash or text.
+
+That notification goes through `createNotification` in `lib/notifications.ts`, the one writer that also posts the immediate webhook. Label-change notifications are inserted alongside their snapshot in `lib/scraper.ts`, so they reach the webhook only through the daily and weekly summaries, which read the 50 most recent `notifications` rows raised since the previous summary (`maybePostSummaryWebhook` in `lib/notification-webhooks.ts`).
 
 ## The shelf fallback chain
 

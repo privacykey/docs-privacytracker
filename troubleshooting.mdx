@@ -48,6 +48,23 @@ If `privacyPolicyUrl` is `NULL` and the app's App Store page does have a policy 
 
 **Workaround:** Add the policy URL manually in **Settings → Apps → \<app\> → Edit policy URL**, or open an issue with the App Store URL so the regex can be widened.
 
+## Privacy policy updates checkbox unticks itself
+
+**Symptoms:** You tick **Privacy policy updates** under **Settings → Notifications**, and it unticks itself once the save finishes. A policy whose text changed never gets a review marker or a webhook post.
+
+**Cause:** The Settings view saves its checkboxes under names the feature-flag layer doesn't read. Saving the Notifications section therefore clears the override on `flag.notifications.types.policy_updates` instead of setting it, and the flag falls back to its default of off. The bell has the same mismatch: it can't read the flag's value, so it falls back to its own default and leaves policy notifications out of its list and badge whatever the flag says.
+
+**Diagnose:**
+
+```bash
+curl -s http://localhost:3000/api/notification-prefs
+# {"prefs":{"label_changes":true,"policy_updates":false,...},...}
+```
+
+`policy_updates` is the flag's resolved value. `false` means a policy change stays on the History timeline and goes no further.
+
+**Workaround:** Set the flag directly. In **Settings → Developer Options → Feature flags**, find `flag.notifications.types.policy_updates` and override it to **on**. A policy text change is then flagged for review and reaches the webhook. Don't save the Notifications section afterwards, because any save there clears the override again. The bell still leaves policy notifications out, so watch the review panel or the webhook for them. See [Configuration → Notifications](/configuration#notifications) for what the flag controls.
+
 ## Docker container exits immediately
 
 **Symptoms:** `docker compose up` brings the container up, then it dies with exit code 1 within a few seconds.

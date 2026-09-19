@@ -195,7 +195,12 @@ components:
             pendingChangeCategoriesByApp:
               type: object
               additionalProperties: true
-              description: "appId → { privacy, accessibility, policy } booleans."
+              description: |
+                appId → `{ privacy, accessibility, policy }` booleans for
+                unacknowledged changes to review. `policy` comes from a
+                flagged privacy-policy change, and only a text change recorded
+                while `flag.notifications.types.policy_updates` is on (off by
+                default) is flagged.
             userVerdicts:
               type: object
               additionalProperties:
@@ -545,12 +550,53 @@ components:
 
     NotificationPrefs:
       type: object
-      additionalProperties:
-        type: boolean
+      required: [prefs, stored, defaults]
       description: |
-        Map of notification type → enabled. Keys mirror the `Notification.kind`
-        enum. Migrated from a single `notification_prefs` JSON blob in
-        `app_settings` by step 3 of the boot migration.
+        Per-type notification switches, backed by the four
+        `flag.notifications.types.*` feature flags. Migrated from a single
+        `notification_prefs` JSON blob in `app_settings` by step 3 of the boot
+        migration. Privacy-policy text changes are opt-in:
+        `defaults.policyUpdates` is false, and `prefs.policy_updates` stays
+        false until `flag.notifications.types.policy_updates` is overridden
+        to on.
+      properties:
+        prefs:
+          type: object
+          description: Resolved value of each `flag.notifications.types.*` flag.
+          properties:
+            label_changes:
+              type: boolean
+              example: true
+            policy_updates:
+              type: boolean
+              description: Privacy-policy text changes. Off by default.
+              example: false
+            accessibility_changes:
+              type: boolean
+              example: false
+            new_privacy_types:
+              type: boolean
+              example: true
+        stored:
+          type: object
+          description: Same values as `prefs`.
+          additionalProperties:
+            type: boolean
+        defaults:
+          type: object
+          description: |
+            The Settings view's defaults, keyed by its own type names. Fixed
+            values, not the flags' resolved state.
+          additionalProperties:
+            type: boolean
+          example:
+            labelChanges: true
+            profileMismatch: true
+            policyUpdates: false
+            versionUpdates: true
+            importCompleted: true
+            manualAppsPrompt: true
+            aiTimeout: true
 
     Focus:
       type: object
@@ -1947,7 +1993,7 @@ paths:
       summary: Read notification preferences
       responses:
         "200":
-          description: Per-type enabled map.
+          description: Resolved per-type switches, with the Settings view's defaults.
           content:
             application/json:
               schema:
@@ -1962,10 +2008,31 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/NotificationPrefs"
+              type: object
+              required: [prefs]
+              properties:
+                prefs:
+                  type: object
+                  nullable: true
+                  additionalProperties:
+                    type: boolean
+                  description: |
+                    `null` clears the overrides on all four
+                    `flag.notifications.types.*` flags. An object sets an
+                    override for each of `label_changes`, `policy_updates`,
+                    `accessibility_changes` and `new_privacy_types` it carries
+                    (`true` for on, `false` for off) and clears the override on
+                    any of the four it leaves out. Other keys, including the
+                    Settings view's camelCase names, never reach the flags.
+                  example:
+                    policy_updates: true
       responses:
         "200":
-          description: Updated.
+          description: The resolved preferences after the write.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPrefs"
 
   /api/activity:
     get:

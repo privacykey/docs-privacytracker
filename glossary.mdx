@@ -43,6 +43,8 @@ A short reference for terms that show up across the app, the API, and the codeba
 
 **Policy version.** A captured version of a developer's privacy policy (URL, fetched text, SHA-256 hash, AI summary if generated). Stored in `policy_versions`. Re-summarisation only runs when the hash changes.
 
+**Policy event.** What a privacy-policy fetch records on the app's History timeline: `first` (the first usable capture), `same` (unchanged text), `changed` (new text, diffable against the previous version), or `error` (a failed or unusable fetch). Every fetch records one, as `policy_event` in a `privacy_snapshots` row's change summary. Only `changed` can be flagged for review or raise a notification, and only while `flag.notifications.types.policy_updates` is on. See [Configuration → Notifications](/configuration#notifications).
+
 **Lens.** One topic area an AI summary covers. Eight of them, in this order: `collection_scope`, `product_use`, `ads_marketing`, `third_party_sharing`, `tracking_analytics`, `user_controls`, `data_retention`, `children_minors`. Defined in `POLICY_LENSES` in `lib/policy-summary-meta.ts`; the per-lens prompt guidance lives in `POLICY_TOPIC_GUIDES` in `lib/privacy-policy.ts`. Summaries are rebuilt against that list, and keys outside it are discarded — so `summary_json` and the API only ever carry these eight.
 
 **Chunking.** Splitting a long policy into ~12 KB pieces for small/local models. Triggered by the `providerLikelyNeedsChunking` flag in `lib/ai-config.ts`. Per-lens prompts are generated against each chunk and merged.
