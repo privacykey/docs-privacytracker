@@ -124,10 +124,12 @@ On the desktop app, the *Keep privacytracker running in the background* wizard s
 |---|---|---|
 | `notification_webhook_url` | a URL, or `''` | Empty disables delivery. Validated with the same SSRF-defended checker as the AI base URL, so private-network destinations are rejected. |
 | `notification_webhook_format` | `slack` / `discord` / `teams` / `generic` | `slack` and `discord` post rendered text; `teams` posts a MessageCard; `generic` posts `{ title, text, notifications[] }`. |
-| `notification_webhook_frequency` | `immediate` / `daily_summary` / `weekly_summary` / `off` | `immediate` posts each privacy-policy change as it's raised. The summaries post the 50 most recent notifications raised since the previous summary, read or unread, from the 30-minute tick once a day or week has elapsed. |
+| `notification_webhook_frequency` | `immediate` / `daily_summary` / `weekly_summary` / `off` | `immediate` (**Each change** in the wizard) posts each App Store or privacy-policy change as soon as it's saved. The summaries post the 50 most recent notifications raised since the previous summary, read or unread, from the 30-minute tick once a day or week has elapsed. |
 | `notification_webhook_last_sent` | epoch ms | Written by the summary tick. Don't set it by hand. |
 
-A privacy-policy change only reaches the webhook while [Privacy policy updates](#notifications) is on. Privacy-label changes and the bell's other notices, such as resumed runs, reach it through the daily and weekly summaries, not one at a time. With the default settings, `immediate` has nothing to post.
+With `immediate`, a sync or rescrape that finds an app's privacy labels, accessibility labels or age rating changed posts as soon as it has saved the change, with the first change as the headline. A privacy-policy change posts as it's raised, and only while [Privacy policy updates](#notifications) is on. Quiet hours hold back the bell notification, not the post. The bell's other notices, such as resumed runs and finished imports, reach the webhook only through the daily and weekly summaries.
+
+The webhook doesn't apply the bell's per-type filters. A change the bell leaves out, such as an accessibility-label change when your focus doesn't include accessibility, is still posted.
 
 Test a URL before committing to it — this fires a sample payload and writes nothing:
 

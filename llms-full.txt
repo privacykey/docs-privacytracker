@@ -633,10 +633,12 @@ On the desktop app, the *Keep privacytracker running in the background* wizard s
 |---|---|---|
 | `notification_webhook_url` | a URL, or `''` | Empty disables delivery. Validated with the same SSRF-defended checker as the AI base URL, so private-network destinations are rejected. |
 | `notification_webhook_format` | `slack` / `discord` / `teams` / `generic` | `slack` and `discord` post rendered text; `teams` posts a MessageCard; `generic` posts `{ title, text, notifications[] }`. |
-| `notification_webhook_frequency` | `immediate` / `daily_summary` / `weekly_summary` / `off` | `immediate` posts each privacy-policy change as it's raised. The summaries post the 50 most recent notifications raised since the previous summary, read or unread, from the 30-minute tick once a day or week has elapsed. |
+| `notification_webhook_frequency` | `immediate` / `daily_summary` / `weekly_summary` / `off` | `immediate` (**Each change** in the wizard) posts each App Store or privacy-policy change as soon as it's saved. The summaries post the 50 most recent notifications raised since the previous summary, read or unread, from the 30-minute tick once a day or week has elapsed. |
 | `notification_webhook_last_sent` | epoch ms | Written by the summary tick. Don't set it by hand. |
 
-A privacy-policy change only reaches the webhook while [Privacy policy updates](#notifications) is on. Privacy-label changes and the bell's other notices, such as resumed runs, reach it through the daily and weekly summaries, not one at a time. With the default settings, `immediate` has nothing to post.
+With `immediate`, a sync or rescrape that finds an app's privacy labels, accessibility labels or age rating changed posts as soon as it has saved the change, with the first change as the headline. A privacy-policy change posts as it's raised, and only while [Privacy policy updates](#notifications) is on. Quiet hours hold back the bell notification, not the post. The bell's other notices, such as resumed runs and finished imports, reach the webhook only through the daily and weekly summaries.
+
+The webhook doesn't apply the bell's per-type filters. A change the bell leaves out, such as an accessibility-label change when your focus doesn't include accessibility, is still posted.
 
 Test a URL before committing to it — this fires a sample payload and writes nothing:
 
@@ -1010,7 +1012,7 @@ In the onboarding wizard's **Add apps** step, click **Upload list** and pick the
 
 **Step 4: Configure quiet hours and the bell**
 
-The guardian defaults already enable 22:00–07:00 quiet hours via `notifications.not_before`, so changes detected overnight defer to morning. If your kid uses different time zones (boarding school, holidays at a relative's house), adjust under **Settings → Notifications → Quiet hours**.
+The guardian defaults already enable 22:00–07:00 quiet hours via `notifications.not_before`, so changes detected overnight defer to morning. Quiet hours hold back only the bell: a [notification webhook](https://docs.privacytracker.privacykey.org/configuration#notification-webhooks) set to **Each change** still posts overnight changes as they're found. If your kid uses different time zones (boarding school, holidays at a relative's house), adjust under **Settings → Notifications → Quiet hours**.
 
 For the bell itself, leave the default **Only when categories change** filter on. Re-scrapes that produce no diff don't add to the unread badge.
 
@@ -1719,7 +1721,7 @@ If you paste an incoming-webhook URL into the desktop app's *Keep privacytracker
 
 The receiving service sees **app names and change summaries**, such as *"Instagram: 2 new categories under Data Used to Track You"*. With [Privacy policy updates](https://docs.privacytracker.privacykey.org/configuration#notifications) on, which it isn't by default, it also learns which apps' privacy policies changed and the host name in each policy's link, as in *"Spotify: Privacy policy text changed at spotify.com."* It does not see your annotations, privacy profile, AI keys, or the underlying policy text. Four payload shapes are supported (`slack`, `discord`, `teams`, `generic`); `generic` additionally carries the structured rows under `notifications`.
 
-Delivery is either immediate or a daily or weekly batch posted from the 30-minute tick. Immediate delivery covers privacy-policy changes; the batches carry the notifications raised since the previous one, privacy-label changes included. Requests go out through the same `safeFetch` SSRF, size, and timeout guards as `/api/scrape`. Since this is a third-party chat service, treat it as you would any other outbound integration: pick a private channel.
+Delivery is either immediate or a daily or weekly batch posted from the 30-minute tick. Immediate delivery posts each App Store change (privacy labels, accessibility labels or age rating) as soon as a sync has saved it, and each privacy-policy change as it's raised, during quiet hours too. The batches carry the notifications raised since the previous one. Neither applies the bell's per-type filters, so a change the bell leaves out is still sent. Requests go out through the same `safeFetch` SSRF, size, and timeout guards as `/api/scrape`. Since this is a third-party chat service, treat it as you would any other outbound integration: pick a private channel.
 
 privacytracker has **no analytics, no telemetry, no crash reporting** of its own. Beyond the four paths above, the SQLite database, all settings, all your annotations stay on your machine.
 
@@ -3774,7 +3776,7 @@ Re-syncs run the same path with `resync=true` — that's what produces change no
 
 The policy step writes a `privacy_snapshots` row to the History timeline on every fetch, through `appendPolicyChangeEntry` in `lib/changelog.ts`. Only a `changed` event can carry `changes_detected = 1` (the column behind the grid's pending dot, the review panel, triage, the universal changelog and the stats) and raise a notification, and only while `flag.notifications.types.policy_updates` is on. It's off by default. `first`, `same` and `error` events are timeline-only, and an unusable body never replaces the stored hash or text.
 
-That notification goes through `createNotification` in `lib/notifications.ts`, the one writer that also posts the immediate webhook. Label-change notifications are inserted alongside their snapshot in `lib/scraper.ts`, so they reach the webhook only through the daily and weekly summaries, which read the 50 most recent `notifications` rows raised since the previous summary (`maybePostSummaryWebhook` in `lib/notification-webhooks.ts`).
+That notification goes through `createNotification` in `lib/notifications.ts`, which inserts the row and then calls `fireWebhookIfConfigured` for the immediate webhook. App Store changes (privacy labels, accessibility labels, age rating) take a different path to the same call: `commitScrapedAppToDb` in `lib/scraper.ts` writes their bell row in the same commit as the snapshot and calls `fireWebhookIfConfigured` once that commit has landed. Both posts are fire-and-forget, and quiet hours defer only the bell row (`not_before`), never the post. The daily and weekly summaries read the 50 most recent `notifications` rows raised since the previous summary (`maybePostSummaryWebhook` in `lib/notification-webhooks.ts`).
 
 ## The shelf fallback chain
 

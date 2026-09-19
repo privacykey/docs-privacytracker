@@ -50,7 +50,7 @@ The job: get a clean view of everything installed on a child's device, surface w
     In the onboarding wizard's **Add apps** step, click **Upload list** and pick the `.txt` from step 2. privacytracker resolves each name through the iTunes Search API, shows you the ranked candidates in a confirm dialog, and starts the scrape once you accept. Apps it can't resolve land in a *needs review* tab — usually misspellings or region-locked apps that need a manual App Store URL.
   </Step>
   <Step title="Configure quiet hours and the bell">
-    The guardian defaults already enable 22:00–07:00 quiet hours via `notifications.not_before`, so changes detected overnight defer to morning. If your kid uses different time zones (boarding school, holidays at a relative's house), adjust under **Settings → Notifications → Quiet hours**.
+    The guardian defaults already enable 22:00–07:00 quiet hours via `notifications.not_before`, so changes detected overnight defer to morning. Quiet hours hold back only the bell: a [notification webhook](/configuration#notification-webhooks) set to **Each change** still posts overnight changes as they're found. If your kid uses different time zones (boarding school, holidays at a relative's house), adjust under **Settings → Notifications → Quiet hours**.
 
     For the bell itself, leave the default **Only when categories change** filter on. Re-scrapes that produce no diff don't add to the unread badge.
   </Step>

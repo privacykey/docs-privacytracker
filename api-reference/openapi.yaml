@@ -552,17 +552,27 @@ components:
       type: object
       required: [prefs, stored, defaults]
       description: |
-        Per-type notification switches, backed by the four
-        `flag.notifications.types.*` feature flags. Migrated from a single
-        `notification_prefs` JSON blob in `app_settings` by step 3 of the boot
-        migration. Privacy-policy text changes are opt-in:
-        `defaults.policyUpdates` is false, and `prefs.policy_updates` stays
-        false until `flag.notifications.types.policy_updates` is overridden
-        to on.
+        Per-type notification switches under two sets of names. The four
+        snake_case keys are the `flag.notifications.types.*` feature flags.
+        The seven camelCase keys are the types the Settings view and the bell
+        use. Two types are in both sets: `labelChanges` is the same switch as
+        `label_changes`, and `policyUpdates` the same as `policy_updates`.
+        The other five camelCase types are stored in the `notification_prefs`
+        setting. Privacy-policy text changes are opt-in: `policy_updates` and
+        `policyUpdates` stay false until
+        `flag.notifications.types.policy_updates` is on.
       properties:
         prefs:
           type: object
-          description: Resolved value of each `flag.notifications.types.*` flag.
+          description: |
+            Every switch's current value, in this order: the four snake_case
+            flag keys, each resolved through the flag cascade (your override,
+            then the focus default, then the hard default), then all seven
+            camelCase keys. `labelChanges` and `policyUpdates` repeat their
+            flags' values. The other five come from `notification_prefs`,
+            with `defaults` filling any type that was never saved. If the flag
+            resolver fails, `prefs` holds only the camelCase keys saved in
+            `notification_prefs`.
           properties:
             label_changes:
               type: boolean
@@ -573,8 +583,32 @@ components:
               example: false
             accessibility_changes:
               type: boolean
+              description: Off unless your focus includes accessibility.
               example: false
             new_privacy_types:
+              type: boolean
+              example: true
+            labelChanges:
+              type: boolean
+              description: Same value as `label_changes`.
+              example: true
+            profileMismatch:
+              type: boolean
+              example: true
+            policyUpdates:
+              type: boolean
+              description: Same value as `policy_updates`.
+              example: false
+            versionUpdates:
+              type: boolean
+              example: true
+            importCompleted:
+              type: boolean
+              example: true
+            manualAppsPrompt:
+              type: boolean
+              example: true
+            aiTimeout:
               type: boolean
               example: true
         stored:
@@ -2018,14 +2052,27 @@ paths:
                     type: boolean
                   description: |
                     `null` clears the overrides on all four
-                    `flag.notifications.types.*` flags. An object sets an
-                    override for each of `label_changes`, `policy_updates`,
-                    `accessibility_changes` and `new_privacy_types` it carries
-                    (`true` for on, `false` for off) and clears the override on
-                    any of the four it leaves out. Other keys, including the
-                    Settings view's camelCase names, never reach the flags.
+                    `flag.notifications.types.*` flags and empties
+                    `notification_prefs`. An object sets each flag's override
+                    from its snake_case key (`true` for on, `false` for off),
+                    or, if that key is missing, from its camelCase name:
+                    `labelChanges` for `label_changes`, `policyUpdates` for
+                    `policy_updates`. When both spellings are sent, the
+                    snake_case one wins. A flag with neither key has its
+                    override cleared, so it falls back to its default.
+                    `accessibility_changes` and `new_privacy_types` have no
+                    camelCase name, so a Settings save, which sends only the
+                    seven camelCase keys, clears their overrides. The
+                    camelCase keys with boolean values are also saved to
+                    `notification_prefs`, and anything else is dropped.
                   example:
-                    policy_updates: true
+                    labelChanges: true
+                    profileMismatch: true
+                    policyUpdates: true
+                    versionUpdates: true
+                    importCompleted: true
+                    manualAppsPrompt: true
+                    aiTimeout: true
       responses:
         "200":
           description: The resolved preferences after the write.
@@ -2033,6 +2080,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NotificationPrefs"
+        "400":
+          description: "The body isn't valid JSON, isn't an object, or has no `prefs` key."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/activity:
     get:
