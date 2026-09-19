@@ -108,11 +108,9 @@ Every privacy-policy fetch leaves a row on the app's History timeline (the **Cha
 
 A failed or unusable fetch keeps the last policy text and hash that were actually read, so the next good fetch of the same text reads as unchanged rather than changed. The AI Policy tab's banner for a recently changed policy has its own setting, **Settings → Privacy policies & AI → Privacy Policy Change Alerts**, and shows either way.
 
-To turn policy changes on, override the flag to **on** under **Settings → Developer Options → Feature flags**. Upgrading keeps an override you already had. Without one, an upgraded install takes the default, so its policy events stop showing as changes to review.
+To turn policy changes on, tick **Privacy policy updates** under **Settings → Notifications**. Upgrading keeps an override you already had. Without one, an upgraded install takes the default, so its policy events stop showing as changes to review.
 
-<Warning>
-  The **Privacy policy updates** checkbox under **Settings → Notifications** doesn't turn this flag on. Saving that section clears the override instead, and the checkbox unticks itself. The bell's list and badge also leave policy notifications out, even with the flag on, though the change still reaches the review panel and the webhook. See [Troubleshooting → Privacy policy updates checkbox unticks itself](/troubleshooting#privacy-policy-updates-checkbox-unticks-itself).
-</Warning>
+Saving that section also clears any override you set under **Settings → Developer Options → Feature flags** on `flag.notifications.types.accessibility_changes` or `flag.notifications.types.new_privacy_types`, because neither has a checkbox there.
 
 ## Notification webhooks
 
