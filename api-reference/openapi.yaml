@@ -310,11 +310,13 @@ components:
         type:
           type: string
           description: |
-            `added` or `removed` for a privacy-label or accessibility change,
-            `modified` for an age-rating change, and `policy` for a
-            privacy-policy event. Notifications of other types carry a single
-            entry with its own `type`, listed under
-            `Notification.change_summary`.
+            `added` or `removed` for a privacy-label or accessibility
+            change, `modified` for an age-rating change, `policy` for a
+            privacy-policy event and `wayback` for a historical-import
+            attempt. Those five are the change types. Notifications of other
+            kinds carry a single entry with its own `type`, listed under
+            `Notification.change_summary`, and the per-type flags don't
+            filter those.
           example: added
         category:
           type: string
@@ -332,8 +334,12 @@ components:
             type: string
           description: |
             Extra lines. An `added` entry for a whole new privacy type lists
-            the type's data categories. A privacy-policy entry gives the word
-            count, how the text was fetched and what to do next.
+            the type's data categories, but lists none when the new type
+            arrives with no categories yet. So `details` doesn't tell a whole
+            new privacy type from a category added to a type that was already
+            there; the `New privacy label: ` prefix on `description` is what
+            does. A privacy-policy entry gives the word count, how the text
+            was fetched and what to do next.
         policy_event:
           type: string
           enum: [first, same, changed, error]
@@ -619,14 +625,25 @@ components:
             and `totalApps` on a resume notice.
 
             The server filters entries by the four
-            `flag.notifications.types.*` flags. `privacy-policy` entries
-            follow `policy_updates`, `accessibility` entries follow
-            `accessibility_changes`, `added` entries without `details` follow
-            `new_privacy_types`, and every other entry follows
-            `label_changes`, the single entries above included. Entries whose
-            flag is off are removed, and a notification left with none is
-            dropped, so turning `label_changes` off also hides resume, import
-            and the other single-entry notifications.
+            `flag.notifications.types.*` flags, and only an entry whose
+            `type` is one of the five change types (`added`, `removed`,
+            `modified`, `policy`, `wayback`) is filtered at all. Among those,
+            `privacy-policy` entries follow `policy_updates`, `accessibility`
+            entries follow `accessibility_changes`, an `added` entry whose
+            `description` starts `New privacy label: ` follows
+            `new_privacy_types`, and every other one follows `label_changes`.
+            An `added` entry for a category added to a type that was already
+            there is a `label_changes` entry, not a `new_privacy_types` one;
+            `details` doesn't decide this, because it's the whole-new type
+            that carries the category titles. Entries whose flag is off are
+            removed, and a notification left with none is dropped.
+
+            The single-entry notifications above carry a `type` outside those
+            five, so none of the four flags governs them and they stay in the
+            list and the unread count whatever the flags are set to. So does
+            an entry with a `type` this list doesn't name. The bell applies
+            the user's own switch for each of them instead, as
+            `GET /api/notifications` describes.
         created_at:
           type: integer
           format: int64
@@ -657,11 +674,11 @@ components:
       description: |
         Per-type notification switches under two sets of names. The four
         snake_case keys are the `flag.notifications.types.*` feature flags.
-        The seven camelCase keys are the types the Settings view and the bell
+        The nine camelCase keys are the types the Settings view and the bell
         use. Two types are in both sets: `labelChanges` is the same switch as
         `label_changes`, and `policyUpdates` the same as `policy_updates`.
-        The other five camelCase types are stored in the `notification_prefs`
-        setting. Privacy-policy text changes are opt-in: `policy_updates` and
+        The other seven camelCase types are stored in the
+        `notification_prefs` setting. Privacy-policy text changes are opt-in: `policy_updates` and
         `policyUpdates` stay false until
         `flag.notifications.types.policy_updates` is on.
       properties:
@@ -670,9 +687,9 @@ components:
           description: |
             Every switch's current value, in this order: the four snake_case
             flag keys, each resolved through the flag cascade (your override,
-            then the focus default, then the hard default), then all seven
+            then the focus default, then the hard default), then all nine
             camelCase keys. `labelChanges` and `policyUpdates` repeat their
-            flags' values. The other five come from `notification_prefs`,
+            flags' values. The other seven come from `notification_prefs`,
             with `defaults` filling any type that was never saved. If the flag
             resolver fails, `prefs` holds only the camelCase keys saved in
             `notification_prefs`.
@@ -714,6 +731,18 @@ components:
             aiTimeout:
               type: boolean
               example: true
+            jobResumed:
+              type: boolean
+              description: |
+                The `sync_resumed`, `wayback_resumed`, `policy_resumed` and
+                `*_stale_cleared` notices. Hiding them doesn't stop the job
+                resuming; `flag.notifications.resume.enabled` is the separate
+                switch for whether those rows are written at all.
+              example: true
+            parserFallthrough:
+              type: boolean
+              description: The `parser_fallthrough` warning.
+              example: true
         stored:
           type: object
           description: Same values as `prefs`.
@@ -734,6 +763,8 @@ components:
             importCompleted: true
             manualAppsPrompt: true
             aiTimeout: true
+            jobResumed: true
+            parserFallthrough: true
 
     Focus:
       type: object
@@ -2155,10 +2186,11 @@ paths:
         The 30 newest rows are read before the per-type filters described
         under `Notification.change_summary` run, so fewer can come back.
         Label and policy change notifications written during quiet hours
-        stay out of the list and the count until the window ends. The five
+        stay out of the list and the count until the window ends. The seven
         Settings types kept in `notification_prefs` (`profileMismatch`,
-        `versionUpdates`, `importCompleted`, `manualAppsPrompt`, `aiTimeout`)
-        aren't applied here: the bell hides those rows itself.
+        `versionUpdates`, `importCompleted`, `manualAppsPrompt`, `aiTimeout`,
+        `jobResumed`, `parserFallthrough`) aren't applied here: the bell
+        hides those rows itself.
       responses:
         "200":
           description: Notifications newest first, with the unread count.
@@ -2287,7 +2319,7 @@ paths:
                     override cleared, so it falls back to its default.
                     `accessibility_changes` and `new_privacy_types` have no
                     camelCase name, so a Settings save, which sends only the
-                    seven camelCase keys, clears their overrides. The
+                    nine camelCase keys, clears their overrides. The
                     camelCase keys with boolean values are also saved to
                     `notification_prefs`, and anything else is dropped.
                   example:
@@ -2298,6 +2330,8 @@ paths:
                     importCompleted: true
                     manualAppsPrompt: true
                     aiTimeout: true
+                    jobResumed: true
+                    parserFallthrough: true
       responses:
         "200":
           description: The resolved preferences after the write.
