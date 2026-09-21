@@ -258,7 +258,7 @@ When a recipient imports a bundle, they see your annotations attributed to your 
 
 ## Runtime and database boundaries
 
-privacytracker is designed as a single-user, local-first tool. **Run only one runtime against a given SQLite database at a time** — a Docker/Node process, *or* the desktop sidecar, not both sharing the same `privacy.db`. SQLite WAL mode handles ordinary contention inside one process, but two app processes writing the same database is outside the supported security and data-integrity model.
+privacytracker is designed as a single-user, local-first tool. **Run only one runtime against a given SQLite database at a time**: a Docker/Node process *or* the desktop app, not both sharing the same `privacy.db`. SQLite WAL mode handles ordinary contention inside one process, but two app processes writing the same database is outside the supported security and data-integrity model.
 
 If you want to run multiple instances (e.g., one per family member), use **separate `data/` directories** per instance. The in-app [device menu](/devices#the-device-menu) separates family members' devices within one install, but it's a filter, not an access boundary — use separate instances when their data must stay apart.
 

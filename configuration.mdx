@@ -38,7 +38,7 @@ browser cannot load the app at all.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PRIVACYTRACKER_RUNTIME` | (unset) | Set to `desktop` by the Tauri sidecar launcher. Gates desktop-only surfaces and feature-flag resolution. |
+| `PRIVACYTRACKER_RUNTIME` | (unset) | Set to `desktop` by the desktop app's Tauri shell. Gates desktop-only surfaces and feature-flag resolution. |
 | `DEPLOYMENT` | (auto-detected) | Override the deployment label: `docker`, `tauri`, `homebrew`, or `node`. Auto-detection probes `/.dockerenv`, then the cgroup, then `HOMEBREW_PREFIX`, and falls back to `node`. The label's only effect is which upgrade command the update banner suggests — set it when auto-detection guesses wrong for your packaging. |
 | `WORKER_DISABLED` | (unset) | Set to `1` to force bulk SQLite writes to run inline on the main thread instead of on the `worker_threads` DB writer. Used by tests, and implied during production builds. Only the literal `1` is honoured. It does **not** disable background sync. |
 | `BUILD_STANDALONE` | (unset) | Build-time flag for `pnpm build:standalone` (the Tauri sidecar bundle). |
