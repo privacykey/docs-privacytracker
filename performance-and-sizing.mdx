@@ -75,7 +75,7 @@ The bulk runner handles 429 gracefully: it bails out of the loop on the first 42
 
 Practical implication: **if you're tracking more than ~200 apps on a single IP, set sync to weekly rather than daily.** You'll probably trip 429s on a daily cadence and nothing useful will come of it. Weekly cadence on 500 apps comfortably finishes in one tick.
 
-If you genuinely need to track thousands of apps, route the scrape egress through multiple IPs (separate VPN endpoints, residential proxies). privacytracker doesn't ship a built-in IP-rotation feature; you'd build it at the network layer.
+If you need to track thousands of apps, route the scrape egress through multiple IPs (separate VPN endpoints, residential proxies). privacytracker doesn't ship a built-in IP-rotation feature; you'd build it at the network layer.
 
 ## AI summarisation cost
 
