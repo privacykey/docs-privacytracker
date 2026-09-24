@@ -17,7 +17,11 @@ Pick the most restrictive box you can live with — every step below is calibrat
 
 <AccordionGroup>
   <Accordion title="Tier 1: localhost only" icon="laptop">
-    Default for the desktop app. No external network exposure; only processes on your machine can reach `http://localhost:3000`. CSRF is enforced; admin token isn't strictly necessary.
+    Default for the desktop app. No external network exposure; only processes on your machine can reach it. CSRF is enforced.
+
+    The desktop app binds `127.0.0.1` and picks its own port at launch, so it has no fixed address and takes no admin token. See [Set the admin token](#set-the-admin-token).
+
+    `http://localhost:3000` is the default for a server you run yourself, from Docker or a source checkout. That server counts as loopback-only when you tell it so with `PRIVACYTRACKER_BIND_HOST=127.0.0.1`; left unset, its bind reads as unknown and the admin token becomes mandatory. See [Configuration](/configuration#environment-variables).
 
     **Hardening checklist:** none beyond the defaults. You're done.
   </Accordion>
@@ -110,7 +114,7 @@ Generate a token with at least 32 bytes of entropy and inject it into the runtim
 
 ```bash
 openssl rand -hex 32
-# 7c8d2a3f… (paste into your .env / docker-compose / launchd plist)
+# 7c8d2a3f… (paste into your .env, compose file or service manager)
 ```
 
 For Docker:
@@ -120,7 +124,11 @@ echo "AUDITOR_ADMIN_TOKEN=$(openssl rand -hex 32)" >> .env
 docker compose up -d --force-recreate
 ```
 
-For the desktop app, set it in the launchd plist or your shell profile so `privacytracker.app` inherits it. Confirm it's taking effect:
+<Note>
+  The desktop app takes no admin token, and there is no way to give it one. It starts its backend with a fixed environment that does not include `AUDITOR_ADMIN_TOKEN`, so setting the variable in a launchd plist, your shell profile or the app's own environment has no effect. The desktop app binds `127.0.0.1` only, which keeps it out of the network-exposed posture that makes the token mandatory.
+</Note>
+
+Confirm it's taking effect:
 
 ```bash
 # Should fail with 401 {"error":"Admin token required"}
