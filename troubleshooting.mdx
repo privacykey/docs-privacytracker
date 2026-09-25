@@ -58,17 +58,18 @@ If `privacyPolicyUrl` is `NULL` and the app's App Store page does have a policy 
 docker compose logs --tail 50
 ```
 
-The most common error is `Error: SQLITE_CANTOPEN: unable to open database file`.
+The most common error says the database file can't be opened (`unable to open database file`).
 
-**Fix:** The bind-mounted `./data/` directory must be writable by the container's user (`UID 1000` by default). On a fresh checkout:
+**Fix:** With the default Compose file the database is in a Docker-managed volume, which the container's user can always write. The error comes from the bind-mount file (`docker-compose.bind-mount.yml`) when `./data` on the host isn't owned by the container's user, `audit` (UID 100, GID 101). Docker creates a missing bind source as `root`, so create it first:
 
 ```bash
-mkdir -p data
-chmod 755 data
-docker compose up --build -d
+mkdir -p data && sudo chown 100:101 data
+docker compose -f docker-compose.yml -f docker-compose.bind-mount.yml up --build -d
 ```
 
-If you're running on SELinux (e.g. Fedora), add `:Z` to the volume mount in `docker-compose.yml` so the host directory gets the right context.
+If you're running on SELinux (e.g. Fedora), add `:Z` to the volume mount in `docker-compose.bind-mount.yml` so the host directory gets the right context.
+
+If `docker compose up` stops before starting anything with `required variable AUDITOR_ADMIN_TOKEN is missing a value`, add a token to `.env` first (see [Installation → Docker](/installation)).
 
 ## `/api/ready` returns `not_ready`
 
@@ -84,10 +85,10 @@ A ready instance answers 200 with `{"status":"ready"}`. Two things are checked: 
 
 | Failure | Meaning | Fix |
 |---|---|---|
-| Database unreachable | The process can't open `privacy.db` | Check no stale process holds the file; `chmod 644 data/privacy.db`; on Docker, confirm the volume mounted (`docker compose exec app ls -la /app/data`) |
+| Database unreachable | The process can't open `privacy.db` | Check no stale process holds the file; `chmod 644 data/privacy.db`; on Docker, confirm the volume mounted (`docker compose exec web ls -la /app/data`) |
 | Data directory not writable | The data directory itself isn't writable | `chmod 755 data`; on Docker, confirm the volume isn't mounted read-only |
 
-If you've been running with WAL mode (the default) and recently force-killed the process, you may have a stale `-wal` or `-shm` file. They're safe to delete with the app stopped.
+If the process was force-killed, don't delete the `-wal` or `-shm` file it left behind. SQLite replays the WAL the next time it opens the database, so deleting it discards every transaction that was committed to it but not yet checkpointed. A lock held by a process that has died is released by the OS on its own.
 
 ## AI summaries never appear
 

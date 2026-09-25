@@ -53,7 +53,7 @@ The same Next.js 16 build powers all three install paths:
 |---|---|---|
 | **Tauri desktop app** (signed + notarized) | macOS users who want a one-click install | Yes — Tauri updater with ed25519 signature check |
 | **Homebrew cask** | macOS users who already manage tools with `brew` | `brew upgrade --cask` |
-| **Docker / Node** | Self-hosted on Windows, Linux, NAS, or any LAN-trusted server | Manual |
+| **Docker** (or from source) | Self-hosted on Windows, Linux, NAS, or any LAN-trusted server | Manual |
 
 **[Get started in 5 minutes](https://docs.privacytracker.privacykey.org/quickstart)**
 
@@ -296,12 +296,14 @@ Best for self-hosting on a server, NAS, or LAN-trusted machine.
 ```bash
 git clone https://github.com/privacykey/privacytracker.git
 cd privacytracker
+echo "AUDITOR_ADMIN_TOKEN=$(openssl rand -hex 32)" >> .env
+chmod 600 .env
 docker compose up --build -d
 ```
 
-The SQLite database is bind-mounted at `./data/privacy.db` on the host, so your data survives container rebuilds.
+Docker always requires the admin token: Compose won't start without it, and it's what you sign in with. The SQLite database lives in a Docker-managed volume, `privacytracker-data`, so your data survives container rebuilds.
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000) and sign in with the token from `.env`.
 
 On macOS without Docker Desktop, [Colima](https://github.com/abiosoft/colima) is a lightweight alternative — see [Installation](https://docs.privacytracker.privacykey.org/installation#colima) for the full setup.
 
@@ -426,16 +428,31 @@ brew uninstall --cask privacytracker
 
 **Docker (Linux / macOS)**
 
-Production-ready, with the SQLite DB bind-mounted so data survives container rebuilds.
+Production-ready, with the SQLite database in a Docker-managed volume so data survives container rebuilds.
 
 ```bash
 git clone https://github.com/privacykey/privacytracker.git
 cd privacytracker
+echo "AUDITOR_ADMIN_TOKEN=$(openssl rand -hex 32)" >> .env
+chmod 600 .env
 docker compose up --build -d
 docker compose logs -f
 ```
 
-Container healthchecks hit `GET /api/ready` (DB reachable + data dir writable). The DB lives at `./data/privacy.db` on the host.
+Compose won't start without `AUDITOR_ADMIN_TOKEN`. Docker always requires the token, even with the port published on `127.0.0.1` only, because other containers can still reach the app. Open [http://localhost:3000](http://localhost:3000) and sign in with it; [Hardening → Set the admin token](https://docs.privacytracker.privacykey.org/hardening#set-the-admin-token) covers rotating it and using it from scripts.
+
+The database lives in the `privacytracker-data` volume, at `/app/data/privacy.db` inside the container. Copy it out with `docker compose cp web:/app/data ./privacytracker-data-backup`. To keep it on the host at `./data/privacy.db` instead, create the directory for the container's user once, then add the bind-mount file:
+
+```bash
+mkdir -p data && sudo chown 100:101 data
+docker compose -f docker-compose.yml -f docker-compose.bind-mount.yml up --build -d
+```
+
+Container healthchecks hit `GET /api/ready` (DB reachable + data dir writable).
+
+> **Note**
+>
+> Since 21 September 2026 the image runs the Rust server, `pt-core serve`, in place of Next.js's `next start`: about 56 MB on Alpine, with no Node inside. Images built from `main`, and the published `latest` tag, have it; release images have it from the first release after v0.1.2. The Compose files, the volume, the port, the environment and the healthcheck are unchanged, and either image opens the database the other wrote. To go back to the Node image, which stays buildable until 1.0, add `PRIVACYTRACKER_BACKEND=node` to `.env` and run `docker compose up --build -d`.
 
 > **Note**
 >
@@ -448,10 +465,10 @@ On macOS without Docker Desktop, [Colima](https://github.com/abiosoft/colima) gi
 ```bash
 brew install colima docker docker-compose
 colima start --cpu 2 --memory 4
-docker compose up --build -d
+docker compose up --build -d   # from the checkout, with AUDITOR_ADMIN_TOKEN in .env as above
 ```
 
-Stop the VM with `colima stop` when you're done; data in the bind-mounted `./data/privacy.db` persists.
+Stop the VM with `colima stop` when you're done; the `privacytracker-data` volume persists.
 
 ## iPhone import helper
 
@@ -501,7 +518,7 @@ If you get `{"status":"not_ready"}` (HTTP 503), check write permissions on the `
 | Surface | Database path |
 |---|---|
 | Desktop app (macOS) | `~/Library/Application Support/privacytracker/privacy.db` |
-| Docker | `./data/privacy.db` on the host (bind-mounted) |
+| Docker | `/app/data/privacy.db` in the `privacytracker-data` volume, or `./data/privacy.db` on the host with the bind-mount file |
 | From source | `./data/privacy.db` in the repo working directory |
 
 The database is a single SQLite file. Back it up by copying the file (with the app stopped, or via the in-app **Settings → Backup** export which produces a versioned JSON snapshot you can restore later).
@@ -550,6 +567,7 @@ browser cannot load the app at all.
 | `DEPLOYMENT` | (auto-detected) | Override the deployment label: `docker`, `tauri`, `homebrew`, or `node`. Auto-detection probes `/.dockerenv`, then the cgroup, then `HOMEBREW_PREFIX`, and falls back to `node`. The label's only effect is which upgrade command the update banner suggests — set it when auto-detection guesses wrong for your packaging. |
 | `WORKER_DISABLED` | (unset) | Set to `1` to force bulk SQLite writes to run inline on the main thread instead of on the `worker_threads` DB writer. Used by tests, and implied during production builds. Only the literal `1` is honoured. It does **not** disable background sync. |
 | `BUILD_STANDALONE` | (unset) | Build-time flag for `pnpm build:standalone` (the Tauri sidecar bundle). |
+| `PRIVACYTRACKER_BACKEND` | `rust` | Docker Compose only, read from `.env`: which server the image is built with (the Dockerfile's `BACKEND` build argument). `node` builds the Node image, which stays buildable as the rollback until 1.0. |
 
 Nothing suppresses the background scheduler tick from the environment — the 30-minute ticker in `instrumentation.ts` reads no environment variable. To stop scheduled sync, set the sync schedule to `manual` (see [Background sync](#background-sync)).
 
@@ -1083,10 +1101,16 @@ cd privacytracker
 export AUDITOR_ADMIN_TOKEN=$(openssl rand -hex 32)
 echo "AUDITOR_ADMIN_TOKEN=$AUDITOR_ADMIN_TOKEN" >> .env
 
-docker compose up --build -d
+# The hostname the household will use, behind the proxy in the next step
+echo "PRIVACYTRACKER_ALLOWED_HOSTS=privacytracker.lan" >> .env
+echo "PRIVACYTRACKER_TRUST_PROXY=1" >> .env
+
+# Keep the database on the NAS's storage, owned by the container's user
+mkdir -p data && sudo chown 100:101 data
+docker compose -f docker-compose.yml -f docker-compose.bind-mount.yml up --build -d
 ```
 
-The bind-mounted `./data/privacy.db` lives on the NAS's persistent storage. Confirm it survives a `docker compose down && up` before going further.
+The database now lives at `./data/privacy.db` on the NAS's persistent storage. Confirm it survives `down` and `up` (with the same `-f` flags) before going further. Without the allowed host, the server refuses requests for `privacytracker.lan`; without trusting the proxy, it can't see that the browser came in over HTTPS.
 
 **Step 3: Front it with a reverse proxy + TLS**
 
@@ -1118,13 +1142,13 @@ curl -X POST https://privacytracker.lan/api/reset \
   -H "X-Auditor-Admin-Token: $AUDITOR_ADMIN_TOKEN"
 ```
 
-The token is verified with `crypto.timingSafeEqual`. Failed attempts append to `audit_log` as `admin_token.login.invalid`. There's no UI for that table — review it with `sqlite3 data/privacy.db "SELECT datetime(created_at/1000,'unixepoch'), action, actor_ip FROM audit_log ORDER BY created_at DESC LIMIT 50;"`.
+The server compares the token in constant time. Failed attempts append to `audit_log` as `admin_token.login.invalid`. There's no UI for that table — review it with `sudo sqlite3 data/privacy.db "SELECT datetime(created_at/1000,'unixepoch'), action, actor_ip FROM audit_log ORDER BY created_at DESC LIMIT 50;"`.
 
 For full hardening, see [Security & trust](https://docs.privacytracker.privacykey.org/security#authentication-and-access-control).
 
 **Step 5: Set up off-host backups**
 
-The NAS's own RAID is not a backup. Schedule a daily rsync (or NAS-native sync task) of `./data/` to a different drive — ideally a different physical machine:
+The NAS's own RAID is not a backup. Schedule a daily rsync (or NAS-native sync task) of `./data/` to a different drive, ideally a different physical machine. The directory is private to the container's user, so run it from root's crontab:
 
 ```cron
 0 3 * * * rsync -a /volume1/docker/privacytracker/data/ user@backup-host:/backups/privacytracker-$(date +\%F)/
@@ -1442,10 +1466,10 @@ privacytracker stores everything in a single SQLite file, which makes backup bor
 | Surface | Path |
 |---|---|
 | Desktop app (macOS) | `~/Library/Application Support/privacytracker/privacy.db` |
-| Docker | `./data/privacy.db` on the host (bind-mounted) |
+| Docker | `/app/data/privacy.db` in the `privacytracker-data` volume, or `./data/privacy.db` on the host with the bind-mount file |
 | From source | `./data/privacy.db` in the repo working directory |
 
-It's a single SQLite file plus optional `-wal` and `-shm` siblings while the app is running. WAL mode means you can copy `privacy.db` even while the app is running — the worst case is missing a few seconds of writes-in-flight, which is fine for backup. For a guaranteed-consistent copy, stop the app first.
+It's a single SQLite file plus `-wal` and `-shm` siblings while the app is running. Recent writes can sit in the `-wal` file until SQLite checkpoints them, so a copy of `privacy.db` alone, taken while the app runs, can miss them. Stop the app first, or use the backup bundle below.
 
 ## Quick file copy (simplest)
 
@@ -1453,14 +1477,16 @@ It's a single SQLite file plus optional `-wal` and `-shm` siblings while the app
 # macOS desktop app — quit the app first for a clean copy
 cp ~/Library/Application\ Support/privacytracker/privacy.db ~/backups/privacy-$(date +%F).db
 
-# Docker
-cp data/privacy.db ~/backups/privacy-$(date +%F).db
+# Docker: stop the container, copy the data directory out of its volume, start it again
+docker compose stop web
+docker compose cp web:/app/data ~/backups/privacytracker-$(date +%F)
+docker compose start web
 
 # From source
 cp data/privacy.db ../backups/privacy-$(date +%F).db
 ```
 
-Restore is the inverse — replace the file with the app stopped, then start it back up. Schema migrations run on boot, so an older backup restored into a newer release upgrades automatically.
+Restore is the inverse — replace the file with the app stopped, then start it back up. Schema migrations run on boot, so an older backup restored into a newer release upgrades automatically. On Docker, restore a backup bundle through **Settings → Backup** instead of copying files into the volume: files copied in with `docker compose cp` belong to `root`, and the server runs as the container's `audit` user.
 
 ## Backup bundle (versioned, app-aware)
 
@@ -1585,10 +1611,10 @@ Same flow in reverse. Export from the desktop app's **Settings → Backup**, dro
 
 ### Source checkout → Docker (or vice versa)
 
-Both already use `./data/privacy.db` in the project root, so you can either:
+A source checkout keeps its database at `./data/privacy.db`. Docker does too with the bind-mount file (see [Installation → Docker](https://docs.privacytracker.privacykey.org/installation)); otherwise it keeps it in the `privacytracker-data` volume. So you can either:
 
-- Copy the file directly between checkouts, or
-- Use the bundle export/import flow (recommended if you want migration to also handle schema upgrades).
+- Copy the file between the two when both use `./data`, or
+- Use the bundle export/import flow (recommended: it works with the volume, and it also handles schema upgrades).
 
 ## What's *not* in a backup
 
@@ -2384,8 +2410,8 @@ A reflex worth practising even when migrations are reliable. The simplest versio
 # Desktop app
 cp ~/Library/Application\ Support/privacytracker/privacy.db ~/backups/privacy-pre-upgrade-$(date +%F).db
 
-# Docker
-cp data/privacy.db data/privacy.db.pre-upgrade
+# Docker: the whole data directory, out of its volume
+docker compose cp web:/app/data ./privacytracker-data-pre-upgrade
 
 # From source
 cp data/privacy.db ../privacy.db.pre-upgrade
@@ -2405,7 +2431,11 @@ Pick the path that matches your install:
 # Homebrew
 brew upgrade --cask privacytracker
 
-# Docker
+# Docker, from the checkout (the Compose file builds the image)
+git pull --ff-only
+docker compose up --build -d
+
+# Docker, from a published image (the deploy/caddy and deploy/traefik examples)
 docker compose pull
 docker compose up -d
 
@@ -2607,17 +2637,18 @@ If `privacyPolicyUrl` is `NULL` and the app's App Store page does have a policy 
 docker compose logs --tail 50
 ```
 
-The most common error is `Error: SQLITE_CANTOPEN: unable to open database file`.
+The most common error says the database file can't be opened (`unable to open database file`).
 
-**Fix:** The bind-mounted `./data/` directory must be writable by the container's user (`UID 1000` by default). On a fresh checkout:
+**Fix:** With the default Compose file the database is in a Docker-managed volume, which the container's user can always write. The error comes from the bind-mount file (`docker-compose.bind-mount.yml`) when `./data` on the host isn't owned by the container's user, `audit` (UID 100, GID 101). Docker creates a missing bind source as `root`, so create it first:
 
 ```bash
-mkdir -p data
-chmod 755 data
-docker compose up --build -d
+mkdir -p data && sudo chown 100:101 data
+docker compose -f docker-compose.yml -f docker-compose.bind-mount.yml up --build -d
 ```
 
-If you're running on SELinux (e.g. Fedora), add `:Z` to the volume mount in `docker-compose.yml` so the host directory gets the right context.
+If you're running on SELinux (e.g. Fedora), add `:Z` to the volume mount in `docker-compose.bind-mount.yml` so the host directory gets the right context.
+
+If `docker compose up` stops before starting anything with `required variable AUDITOR_ADMIN_TOKEN is missing a value`, add a token to `.env` first (see [Installation → Docker](https://docs.privacytracker.privacykey.org/installation)).
 
 ## `/api/ready` returns `not_ready`
 
@@ -2633,10 +2664,10 @@ A ready instance answers 200 with `{"status":"ready"}`. Two things are checked: 
 
 | Failure | Meaning | Fix |
 |---|---|---|
-| Database unreachable | The process can't open `privacy.db` | Check no stale process holds the file; `chmod 644 data/privacy.db`; on Docker, confirm the volume mounted (`docker compose exec app ls -la /app/data`) |
+| Database unreachable | The process can't open `privacy.db` | Check no stale process holds the file; `chmod 644 data/privacy.db`; on Docker, confirm the volume mounted (`docker compose exec web ls -la /app/data`) |
 | Data directory not writable | The data directory itself isn't writable | `chmod 755 data`; on Docker, confirm the volume isn't mounted read-only |
 
-If you've been running with WAL mode (the default) and recently force-killed the process, you may have a stale `-wal` or `-shm` file. They're safe to delete with the app stopped.
+If the process was force-killed, don't delete the `-wal` or `-shm` file it left behind. SQLite replays the WAL the next time it opens the database, so deleting it discards every transaction that was committed to it but not yet checkpointed. A lock held by a process that has died is released by the OS on its own.
 
 ## AI summaries never appear
 
@@ -2842,7 +2873,7 @@ privacytracker is not a substitute for legal advice and we don't claim any compl
 Three reasons:
 
 1. **Single-user app** — there's no multi-write contention to manage. WAL mode + a 5-second `busy_timeout` cover the rare cases where a manual scrape and a scheduled sync overlap.
-2. **Bind-mountable as one file** — `./data/privacy.db` survives container rebuilds, copies trivially for backup, and can be inspected directly with the `sqlite3` CLI. No backup server, no replication, no DBA needed.
+2. **One file**: `privacy.db` survives container rebuilds in its volume, copies trivially for backup, and can be inspected directly with the `sqlite3` CLI. No backup server, no replication, no DBA needed.
 3. **No schema migration tooling** — better-sqlite3's synchronous API plus an inline `migrations` array of `ALTER TABLE` statements is a complete schema-versioning story for the project's complexity. Postgres would buy us nothing we'd actually use.
 
 The trade-off: privacytracker doesn't scale horizontally. That's fine — it isn't a multi-tenant SaaS, it's a tool you run for yourself.
@@ -3668,7 +3699,7 @@ Source: https://docs.privacytracker.privacykey.org/develop/architecture
 
 Codebase shape, data flow, three crash-safe runners, and the database model.
 
-A Next.js 16 App Router app, written in TypeScript, backed by a single local SQLite file. All scraping, parsing, AI calls, and snapshotting happen server-side inside API routes that import helpers from `lib/`. Tauri wraps the same Next.js bundle as a desktop app; Docker ships the same bundle as a self-hosted service.
+A Next.js 16 App Router app, written in TypeScript, backed by a single local SQLite file. All scraping, parsing, AI calls, and snapshotting happen server-side inside API routes that import helpers from `lib/`. Tauri wraps the same frontend as a desktop app, and Docker ships it as a self-hosted service. The server side has two implementations while the Node server is the rollback: `lib/` behind the Next.js API routes, and `core/`, a Rust port that answers the same API byte for byte. The Docker image runs `core/` (`pt-core serve`), and so does the desktop app from its first release on the Rust backend.
 
 > **Note**
 >
@@ -3701,6 +3732,7 @@ privacytracker/
 │   ├── apps/[id]/              app detail + change history
 │   └── globals.css             design tokens, severity colours, .legal-layout primitives
 ├── lib/                        server-side logic — most of the product lives here
+├── core/                       the Rust server (pt-core): the same API, run by the Docker image and the desktop app
 ├── src-tauri/                  Rust desktop shell + sidecar lifecycle
 ├── scripts/                    out-of-band scripts (ios-app-import companion, screenshot capture, standalone staging)
 ├── deploy/                     reference reverse-proxy stacks (caddy/, traefik/)
@@ -3708,7 +3740,7 @@ privacytracker/
 ├── locales/                    en.json / zh.json translation bundles
 ├── public/                     static assets served by Next
 ├── docs/                       in-repo notes (the published site lives in docs-privacytracker)
-├── data/privacy.db             SQLite database (gitignored; bind-mounted in Docker)
+├── data/privacy.db             SQLite database (gitignored; in Docker, a Docker-managed volume)
 └── AGENTS.md / CLAUDE.md       coding-agent instructions
 ```
 

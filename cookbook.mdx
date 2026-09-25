@@ -121,10 +121,16 @@ The job: run privacytracker on always-on hardware (Synology, Unraid, a Raspberry
     export AUDITOR_ADMIN_TOKEN=$(openssl rand -hex 32)
     echo "AUDITOR_ADMIN_TOKEN=$AUDITOR_ADMIN_TOKEN" >> .env
 
-    docker compose up --build -d
+    # The hostname the household will use, behind the proxy in the next step
+    echo "PRIVACYTRACKER_ALLOWED_HOSTS=privacytracker.lan" >> .env
+    echo "PRIVACYTRACKER_TRUST_PROXY=1" >> .env
+
+    # Keep the database on the NAS's storage, owned by the container's user
+    mkdir -p data && sudo chown 100:101 data
+    docker compose -f docker-compose.yml -f docker-compose.bind-mount.yml up --build -d
     ```
 
-    The bind-mounted `./data/privacy.db` lives on the NAS's persistent storage. Confirm it survives a `docker compose down && up` before going further.
+    The database now lives at `./data/privacy.db` on the NAS's persistent storage. Confirm it survives `down` and `up` (with the same `-f` flags) before going further. Without the allowed host, the server refuses requests for `privacytracker.lan`; without trusting the proxy, it can't see that the browser came in over HTTPS.
   </Step>
   <Step title="Front it with a reverse proxy + TLS">
     The household browses to the NAS's hostname, not its bare IP. A short Caddyfile:
@@ -154,12 +160,12 @@ The job: run privacytracker on always-on hardware (Synology, Unraid, a Raspberry
       -H "X-Auditor-Admin-Token: $AUDITOR_ADMIN_TOKEN"
     ```
 
-    The token is verified with `crypto.timingSafeEqual`. Failed attempts append to `audit_log` as `admin_token.login.invalid`. There's no UI for that table — review it with `sqlite3 data/privacy.db "SELECT datetime(created_at/1000,'unixepoch'), action, actor_ip FROM audit_log ORDER BY created_at DESC LIMIT 50;"`.
+    The server compares the token in constant time. Failed attempts append to `audit_log` as `admin_token.login.invalid`. There's no UI for that table — review it with `sudo sqlite3 data/privacy.db "SELECT datetime(created_at/1000,'unixepoch'), action, actor_ip FROM audit_log ORDER BY created_at DESC LIMIT 50;"`.
 
     For full hardening, see [Security & trust](/security#authentication-and-access-control).
   </Step>
   <Step title="Set up off-host backups">
-    The NAS's own RAID is not a backup. Schedule a daily rsync (or NAS-native sync task) of `./data/` to a different drive — ideally a different physical machine:
+    The NAS's own RAID is not a backup. Schedule a daily rsync (or NAS-native sync task) of `./data/` to a different drive, ideally a different physical machine. The directory is private to the container's user, so run it from root's crontab:
 
     ```cron
     0 3 * * * rsync -a /volume1/docker/privacytracker/data/ user@backup-host:/backups/privacytracker-$(date +\%F)/

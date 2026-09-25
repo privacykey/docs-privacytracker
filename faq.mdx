@@ -76,7 +76,7 @@ description: "Common questions about what privacytracker is, what it isn't, and 
     Three reasons:
 
     1. **Single-user app** — there's no multi-write contention to manage. WAL mode + a 5-second `busy_timeout` cover the rare cases where a manual scrape and a scheduled sync overlap.
-    2. **Bind-mountable as one file** — `./data/privacy.db` survives container rebuilds, copies trivially for backup, and can be inspected directly with the `sqlite3` CLI. No backup server, no replication, no DBA needed.
+    2. **One file**: `privacy.db` survives container rebuilds in its volume, copies trivially for backup, and can be inspected directly with the `sqlite3` CLI. No backup server, no replication, no DBA needed.
     3. **No schema migration tooling** — better-sqlite3's synchronous API plus an inline `migrations` array of `ALTER TABLE` statements is a complete schema-versioning story for the project's complexity. Postgres would buy us nothing we'd actually use.
 
     The trade-off: privacytracker doesn't scale horizontally. That's fine — it isn't a multi-tenant SaaS, it's a tool you run for yourself.

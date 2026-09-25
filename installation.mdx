@@ -43,16 +43,31 @@ privacytracker ships three install paths from one Next.js bundle. Pick whichever
   </Tab>
 
   <Tab title="Docker (Linux / macOS)">
-    Production-ready, with the SQLite DB bind-mounted so data survives container rebuilds.
+    Production-ready, with the SQLite database in a Docker-managed volume so data survives container rebuilds.
 
     ```bash
     git clone https://github.com/privacykey/privacytracker.git
     cd privacytracker
+    echo "AUDITOR_ADMIN_TOKEN=$(openssl rand -hex 32)" >> .env
+    chmod 600 .env
     docker compose up --build -d
     docker compose logs -f
     ```
 
-    Container healthchecks hit `GET /api/ready` (DB reachable + data dir writable). The DB lives at `./data/privacy.db` on the host.
+    Compose won't start without `AUDITOR_ADMIN_TOKEN`. Docker always requires the token, even with the port published on `127.0.0.1` only, because other containers can still reach the app. Open [http://localhost:3000](http://localhost:3000) and sign in with it; [Hardening → Set the admin token](/hardening#set-the-admin-token) covers rotating it and using it from scripts.
+
+    The database lives in the `privacytracker-data` volume, at `/app/data/privacy.db` inside the container. Copy it out with `docker compose cp web:/app/data ./privacytracker-data-backup`. To keep it on the host at `./data/privacy.db` instead, create the directory for the container's user once, then add the bind-mount file:
+
+    ```bash
+    mkdir -p data && sudo chown 100:101 data
+    docker compose -f docker-compose.yml -f docker-compose.bind-mount.yml up --build -d
+    ```
+
+    Container healthchecks hit `GET /api/ready` (DB reachable + data dir writable).
+
+    <Note>
+      Since 21 September 2026 the image runs the Rust server, `pt-core serve`, in place of Next.js's `next start`: about 56 MB on Alpine, with no Node inside. Images built from `main`, and the published `latest` tag, have it; release images have it from the first release after v0.1.2. The Compose files, the volume, the port, the environment and the healthcheck are unchanged, and either image opens the database the other wrote. To go back to the Node image, which stays buildable until 1.0, add `PRIVACYTRACKER_BACKEND=node` to `.env` and run `docker compose up --build -d`.
+    </Note>
   </Tab>
 </Tabs>
 
@@ -67,10 +82,10 @@ On macOS without Docker Desktop, [Colima](https://github.com/abiosoft/colima) gi
 ```bash
 brew install colima docker docker-compose
 colima start --cpu 2 --memory 4
-docker compose up --build -d
+docker compose up --build -d   # from the checkout, with AUDITOR_ADMIN_TOKEN in .env as above
 ```
 
-Stop the VM with `colima stop` when you're done; data in the bind-mounted `./data/privacy.db` persists.
+Stop the VM with `colima stop` when you're done; the `privacytracker-data` volume persists.
 
 ## iPhone import helper
 
@@ -120,7 +135,7 @@ If you get `{"status":"not_ready"}` (HTTP 503), check write permissions on the `
 | Surface | Database path |
 |---|---|
 | Desktop app (macOS) | `~/Library/Application Support/privacytracker/privacy.db` |
-| Docker | `./data/privacy.db` on the host (bind-mounted) |
+| Docker | `/app/data/privacy.db` in the `privacytracker-data` volume, or `./data/privacy.db` on the host with the bind-mount file |
 | From source | `./data/privacy.db` in the repo working directory |
 
 The database is a single SQLite file. Back it up by copying the file (with the app stopped, or via the in-app **Settings → Backup** export which produces a versioned JSON snapshot you can restore later).
