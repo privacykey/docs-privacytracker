@@ -297,47 +297,109 @@ components:
               error:
                 type: string
 
+    ChangeEntry:
+      type: object
+      required: [type, description]
+      description: |
+        One change entry, as the changelog feed and notifications return it.
+        `type` and `category` say what changed. There is no `kind` field.
+      example:
+        type: added
+        description: '"Data Linked to You" now collects: Location'
+      properties:
+        type:
+          type: string
+          description: |
+            `added` or `removed` for a privacy-label or accessibility
+            change, `modified` for an age-rating change, `policy` for a
+            privacy-policy event and `wayback` for a historical-import
+            attempt. Those five are the change types. Notifications of other
+            kinds carry a single entry with its own `type`, listed under
+            `Notification.change_summary`, and the per-type flags don't
+            filter those.
+          example: added
+        category:
+          type: string
+          enum: [privacy-label, privacy-policy, accessibility, age-rating]
+          description: |
+            Left out on privacy-label changes. The app reads a missing
+            category as `privacy-label`.
+        description:
+          type: string
+          description: The change as one English sentence. Every entry has one.
+          example: '"Data Linked to You" now collects: Location'
+        details:
+          type: array
+          items:
+            type: string
+          description: |
+            Extra lines. An `added` entry for a whole new privacy type lists
+            the type's data categories, but lists none when the new type
+            arrives with no categories yet. So `details` doesn't tell a whole
+            new privacy type from a category added to a type that was already
+            there; the `New privacy label: ` prefix on `description` is what
+            does. A privacy-policy entry gives the word count, how the text
+            was fetched and what to do next.
+        policy_event:
+          type: string
+          enum: [first, same, changed, error]
+          description: |
+            On `privacy-policy` entries. Only a `changed` event is flagged as a
+            change or notified, and only while
+            `flag.notifications.types.policy_updates` is on. Snapshots flagged
+            by earlier versions can also hold `first` or `error`.
+        policy_version_id:
+          type: string
+          description: On `privacy-policy` entries, the id of the stored policy version.
+
     ChangelogRow:
       type: object
-      required: [appId, scrapedAt, changes, source]
+      required: [id, appId, appName, appIconUrl, appDeveloper, scrapedAt, source, triggeredBy, entry]
+      description: |
+        One change entry from the universal changelog feed, with the app and
+        the snapshot it came from. A snapshot that recorded several changes
+        gives one row for each.
       properties:
+        id:
+          type: string
+          description: The snapshot's id and the entry's position in it, joined by a colon.
+          example: "0f3a6c1e-2b9d-4e57-8a41-6d2c9b7e5f10:0"
         appId:
-          type: integer
-          format: int64
-        scrapedAt:
-          type: integer
-          format: int64
-          description: Unix timestamp (ms).
-        source:
           type: string
-          enum: [live, wayback]
-        triggered_by:
+          description: Apple's numeric track ID, as a string.
+          example: "324684580"
+        appName:
           type: string
-          nullable: true
-          enum: [scheduled, manual, import, wayback, null]
-        wayback_snapshot_url:
+          example: Spotify - Music and Podcasts
+        appIconUrl:
           type: string
           format: uri
           nullable: true
-        matches_live_sync:
-          type: boolean
-        changes:
-          type: array
-          items:
-            type: object
-            required: [kind]
-            properties:
-              kind:
-                type: string
-                enum: [category_added, category_removed, severity_changed]
-              category:
-                type: string
-              from:
-                type: string
-                nullable: true
-              to:
-                type: string
-                nullable: true
+        appDeveloper:
+          type: string
+          nullable: true
+          example: Spotify Ltd.
+        scrapedAt:
+          type: integer
+          format: int64
+          description: |
+            When the snapshot was taken (Unix ms). For a Wayback row, the date
+            of the archive capture.
+          example: 1789776000000
+        source:
+          type: string
+          enum: [live, wayback]
+          description: "`wayback` marks a snapshot back-filled from the Internet Archive."
+        triggeredBy:
+          type: string
+          nullable: true
+          enum: [scheduled, manual, import, wayback, sample, null]
+          description: |
+            What started the scrape. `sample` marks development seed data.
+            Null on privacy-policy entries and on live rows written before the
+            app recorded a trigger.
+        entry:
+          $ref: "#/components/schemas/ChangeEntry"
 
     BackupBundle:
       type: object
@@ -518,35 +580,93 @@ components:
 
     Notification:
       type: object
-      required: [id, kind, appId, createdAt, read]
+      required: [id, app_id, app_name, change_summary, created_at, read, stale, iconUrl]
+      description: |
+        One row of the bell feed, with the database's column names. There is
+        no `kind` field: what a notification is about is in `change_summary`.
       properties:
         id:
-          type: integer
-          format: int64
-        kind:
           type: string
-          enum:
-            - app_changed
-            - sync_resumed
-            - wayback_resumed
-            - policy_resumed
-            - sync_stale_cleared
-            - wayback_stale_cleared
-            - policy_stale_cleared
-        appId:
-          type: integer
-          format: int64
+          format: uuid
+          example: 5b0c2f8e-3a47-4d1e-9f3c-2b8e6a1d7c90
+        app_id:
+          type: string
           nullable: true
-          description: Null for cross-cutting events (resume notifications use synthetic ids like `__sync_resume__`).
-        createdAt:
+          description: |
+            Apple's numeric track ID, or one of these synthetic ids:
+            `__sync_resume__`, `__wayback_resume__`, `__policy_resume__`,
+            `__import__`, `__manual_apps__`, `__ai_timeout__`,
+            `__parser_fallthrough__`.
+          example: "324684580"
+        app_name:
+          type: string
+          description: |
+            The app's name when the notification was written, or a label
+            such as `App Store sync` or `Import finished`.
+          example: Spotify - Music and Podcasts
+        change_summary:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChangeEntry"
+          description: |
+            What the notification is about. A label change lists every change
+            one sync found: privacy-label entries, which have no `category`,
+            plus any `accessibility` and `age-rating` entries. A privacy-policy
+            text change has one entry with `type` `policy`, `category`
+            `privacy-policy` and `policy_event` `changed`. It's written only
+            while `flag.notifications.types.policy_updates` is on.
+
+            Every other notification has one entry whose `type` names it:
+            `sync_resumed` or `sync_stale_cleared` after a restart (and the
+            `wayback_` and `policy_` equivalents), `import_completed`,
+            `manual_apps_prompt`, `ai_timeout`, `profile_mismatch`,
+            `version_update` or `parser_fallthrough`. These entries carry
+            their own fields beside `description`, such as `appsRemaining`
+            and `totalApps` on a resume notice.
+
+            The server filters entries by the four
+            `flag.notifications.types.*` flags, and only an entry whose
+            `type` is one of the five change types (`added`, `removed`,
+            `modified`, `policy`, `wayback`) is filtered at all. Among those,
+            `privacy-policy` entries follow `policy_updates`, `accessibility`
+            entries follow `accessibility_changes`, an `added` entry whose
+            `description` starts `New privacy label: ` follows
+            `new_privacy_types`, and every other one follows `label_changes`.
+            An `added` entry for a category added to a type that was already
+            there is a `label_changes` entry, not a `new_privacy_types` one;
+            `details` doesn't decide this, because it's the whole-new type
+            that carries the category titles. Entries whose flag is off are
+            removed, and a notification left with none is dropped.
+
+            The single-entry notifications above carry a `type` outside those
+            five, so none of the four flags governs them and they stay in the
+            list and the unread count whatever the flags are set to. So does
+            an entry with a `type` this list doesn't name. The bell applies
+            the user's own switch for each of them instead, as
+            `GET /api/notifications` describes.
+        created_at:
           type: integer
           format: int64
+          description: Unix timestamp (ms).
+          example: 1789776000000
         read:
-          type: boolean
-        title:
+          type: integer
+          enum: [0, 1]
+          description: 1 once the notification has been marked read.
+        stale:
+          type: integer
+          enum: [0, 1]
+          description: |
+            1 once an import row that pointed at this app is re-matched to a
+            different App Store listing. The bell shows these rows faded and
+            struck through.
+        iconUrl:
           type: string
-        body:
-          type: string
+          format: uri
+          nullable: true
+          description: |
+            Icon of the tracked app with this `app_id`. Null for synthetic
+            ids, for apps no longer tracked and for apps with no stored icon.
 
     NotificationPrefs:
       type: object
@@ -554,11 +674,11 @@ components:
       description: |
         Per-type notification switches under two sets of names. The four
         snake_case keys are the `flag.notifications.types.*` feature flags.
-        The seven camelCase keys are the types the Settings view and the bell
+        The nine camelCase keys are the types the Settings view and the bell
         use. Two types are in both sets: `labelChanges` is the same switch as
         `label_changes`, and `policyUpdates` the same as `policy_updates`.
-        The other five camelCase types are stored in the `notification_prefs`
-        setting. Privacy-policy text changes are opt-in: `policy_updates` and
+        The other seven camelCase types are stored in the
+        `notification_prefs` setting. Privacy-policy text changes are opt-in: `policy_updates` and
         `policyUpdates` stay false until
         `flag.notifications.types.policy_updates` is on.
       properties:
@@ -567,9 +687,9 @@ components:
           description: |
             Every switch's current value, in this order: the four snake_case
             flag keys, each resolved through the flag cascade (your override,
-            then the focus default, then the hard default), then all seven
+            then the focus default, then the hard default), then all nine
             camelCase keys. `labelChanges` and `policyUpdates` repeat their
-            flags' values. The other five come from `notification_prefs`,
+            flags' values. The other seven come from `notification_prefs`,
             with `defaults` filling any type that was never saved. If the flag
             resolver fails, `prefs` holds only the camelCase keys saved in
             `notification_prefs`.
@@ -611,6 +731,18 @@ components:
             aiTimeout:
               type: boolean
               example: true
+            jobResumed:
+              type: boolean
+              description: |
+                The `sync_resumed`, `wayback_resumed`, `policy_resumed` and
+                `*_stale_cleared` notices. Hiding them doesn't stop the job
+                resuming; `flag.notifications.resume.enabled` is the separate
+                switch for whether those rows are written at all.
+              example: true
+            parserFallthrough:
+              type: boolean
+              description: The `parser_fallthrough` warning.
+              example: true
         stored:
           type: object
           description: Same values as `prefs`.
@@ -631,6 +763,8 @@ components:
             importCompleted: true
             manualAppsPrompt: true
             aiTimeout: true
+            jobResumed: true
+            parserFallthrough: true
 
     Focus:
       type: object
@@ -1110,32 +1244,96 @@ paths:
   /api/changelog:
     get:
       tags: [Changelog]
-      summary: Read snapshot changelog rows
+      summary: Read the universal changelog feed
+      description: |
+        Every recorded change across all tracked apps, one row per change
+        entry, newest snapshot first. Only snapshots flagged as having
+        changes are read: label, accessibility and age-rating changes from
+        syncs, label changes back-filled from the Internet Archive, and
+        privacy-policy text changes flagged while
+        `flag.notifications.types.policy_updates` was on. Wayback import
+        attempts aren't changes, so the `wayback` type and the
+        `wayback-attempt` category never match.
+
+        The feed reads the newest `limit` × 8 of those snapshots (4,000 at
+        most), filters their entries, then applies `offset` and `limit`. On
+        a long history, `total` counts only the entries in those snapshots,
+        and paging with `offset` stops there.
       parameters:
         - in: query
-          name: appId
+          name: from
           schema:
             type: integer
             format: int64
-          description: Filter to one app.
+          description: Only snapshots taken at or after this time (Unix ms).
+        - in: query
+          name: to
+          schema:
+            type: integer
+            format: int64
+          description: Only snapshots taken at or before this time (Unix ms).
+        - in: query
+          name: appId
+          schema:
+            type: string
+          description: |
+            Only this app's changes (Apple's numeric track ID). Ignored unless
+            it contains only letters, digits, `_` and `-`.
+          example: "324684580"
+        - in: query
+          name: type
+          schema:
+            type: string
+          description: |
+            Comma-separated entry types to include: `added`, `removed`,
+            `modified`, `policy`, `wayback`. Other values are dropped, and if
+            none are left, every type is returned.
+          example: "added,removed"
+        - in: query
+          name: category
+          schema:
+            type: string
+          description: |
+            Comma-separated entry categories to include: `privacy-label`,
+            `privacy-policy`, `wayback-attempt`, `accessibility`. An entry
+            with no `category` counts as `privacy-label`. Other values,
+            `age-rating` included, are dropped, and if none are left, every
+            category is returned.
+          example: accessibility
         - in: query
           name: limit
           schema:
             type: integer
             default: 100
+            minimum: 1
             maximum: 500
+          description: Page size. Larger values are treated as 500.
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+          description: Entries to skip from the start of the filtered list.
       responses:
         "200":
-          description: Changelog rows newest first.
+          description: One row per change entry, newest first.
           content:
             application/json:
               schema:
                 type: object
+                required: [rows, total]
                 properties:
                   rows:
                     type: array
                     items:
                       $ref: "#/components/schemas/ChangelogRow"
+                  total:
+                    type: integer
+                    description: |
+                      Matching entries before `offset` and `limit` were
+                      applied, within the snapshots the feed read.
+                    example: 42
 
   /api/apps/{id}/acknowledge:
     post:
@@ -1981,27 +2179,47 @@ paths:
     get:
       tags: [Notifications]
       summary: Poll the bell feed
-      parameters:
-        - in: query
-          name: unread
-          schema:
-            type: boolean
-            default: false
+      description: |
+        Returns up to 30 notifications, newest first, and the unread count.
+        Takes no query parameters.
+
+        The 30 newest rows are read before the per-type filters described
+        under `Notification.change_summary` run, so fewer can come back.
+        Label and policy change notifications written during quiet hours
+        stay out of the list and the count until the window ends. The seven
+        Settings types kept in `notification_prefs` (`profileMismatch`,
+        `versionUpdates`, `importCompleted`, `manualAppsPrompt`, `aiTimeout`,
+        `jobResumed`, `parserFallthrough`) aren't applied here: the bell
+        hides those rows itself.
       responses:
         "200":
-          description: Notification rows newest first.
+          description: Notifications newest first, with the unread count.
           content:
             application/json:
               schema:
                 type: object
+                required: [notifications, unreadCount]
                 properties:
                   notifications:
                     type: array
+                    maxItems: 30
                     items:
                       $ref: "#/components/schemas/Notification"
+                  unreadCount:
+                    type: integer
+                    description: |
+                      Unread notifications in the whole table, not only the
+                      rows returned, after quiet hours and the per-type
+                      filters.
+                    example: 3
     post:
       tags: [Notifications]
-      summary: Mark notifications read
+      summary: Mark notifications read or unread
+      description: |
+        `mark_read` marks every notification read, including rows that quiet
+        hours or the per-type filters are hiding. `mark_unread` marks the
+        listed notifications unread again. The bell sends it to undo opening
+        the feed.
       security:
         - sameOrigin: []
       requestBody:
@@ -2010,16 +2228,55 @@ paths:
           application/json:
             schema:
               type: object
-              required: [ids]
+              required: [action]
               properties:
+                action:
+                  type: string
+                  enum: [mark_read, mark_unread]
+                  example: mark_unread
                 ids:
                   type: array
                   items:
-                    type: integer
-                    format: int64
+                    type: string
+                  description: |
+                    Notification ids. Required with `mark_unread`, ignored with
+                    `mark_read`. Anything that isn't a non-empty string is
+                    skipped, and only the first 200 of the rest are used.
+                  example: [5b0c2f8e-3a47-4d1e-9f3c-2b8e6a1d7c90]
       responses:
         "200":
-          description: Marked read.
+          description: |
+            `{ "success": true }`, plus `flipped` for `mark_unread`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success]
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  flipped:
+                    type: integer
+                    description: |
+                      `mark_unread` only. How many notifications the ids
+                      matched, counting any that were already unread. 0 when
+                      `ids` has no usable entries.
+                    example: 1
+        "400":
+          description: |
+            The body is empty or isn't JSON, `action` is missing or unknown,
+            or `mark_unread` came without an `ids` array.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: The body is larger than 32 KiB.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/notification-prefs:
     get:
@@ -2062,7 +2319,7 @@ paths:
                     override cleared, so it falls back to its default.
                     `accessibility_changes` and `new_privacy_types` have no
                     camelCase name, so a Settings save, which sends only the
-                    seven camelCase keys, clears their overrides. The
+                    nine camelCase keys, clears their overrides. The
                     camelCase keys with boolean values are also saved to
                     `notification_prefs`, and anything else is dropped.
                   example:
@@ -2073,6 +2330,8 @@ paths:
                     importCompleted: true
                     manualAppsPrompt: true
                     aiTimeout: true
+                    jobResumed: true
+                    parserFallthrough: true
       responses:
         "200":
           description: The resolved preferences after the write.

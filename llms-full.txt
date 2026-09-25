@@ -6091,7 +6091,7 @@ The complete OpenAPI document is at https://docs.privacytracker.privacykey.org/a
 | DELETE | `/api/apps` | Delete an app |
 | POST | `/api/search` | Resolve app names to App Store candidates |
 | POST | `/api/scrape` | Scrape App Store privacy labels |
-| GET | `/api/changelog` | Read snapshot changelog rows |
+| GET | `/api/changelog` | Read the universal changelog feed |
 | POST | `/api/apps/{id}/acknowledge` | Mark an app's changes acknowledged |
 | POST | `/api/apps/{id}/import-history` | Import Wayback history for one app |
 | DELETE | `/api/apps/{id}/import-history` | Purge Wayback rows for one app |
@@ -6130,7 +6130,7 @@ The complete OpenAPI document is at https://docs.privacytracker.privacykey.org/a
 | POST | `/api/verdicts` | Set or update a verdict for an app |
 | DELETE | `/api/verdicts` | Clear a verdict for an app |
 | GET | `/api/notifications` | Poll the bell feed |
-| POST | `/api/notifications` | Mark notifications read |
+| POST | `/api/notifications` | Mark notifications read or unread |
 | GET | `/api/notification-prefs` | Read notification preferences |
 | PUT | `/api/notification-prefs` | Update notification preferences |
 | GET | `/api/activity` | Read activity-log rows |
