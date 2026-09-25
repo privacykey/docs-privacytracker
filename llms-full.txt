@@ -2115,7 +2115,7 @@ Pick the most restrictive box you can live with — every step below is calibrat
 
 Default for the desktop app. No external network exposure; only processes on your machine can reach it. CSRF is enforced.
 
-The desktop app binds `127.0.0.1` and picks its own port at launch, so it has no fixed address and takes no admin token. See [Set the admin token](#set-the-admin-token).
+The desktop app binds `127.0.0.1` on a port of its own, never 3000, and takes no admin token. See [Set the admin token](#set-the-admin-token).
 
 `http://localhost:3000` is the default for a server you run yourself, from Docker or a source checkout. That server counts as loopback-only when you tell it so with `PRIVACYTRACKER_BIND_HOST=127.0.0.1`; left unset, its bind reads as unknown and the admin token becomes mandatory. See [Configuration](https://docs.privacytracker.privacykey.org/configuration#environment-variables).
 
@@ -2222,7 +2222,7 @@ docker compose up -d --force-recreate
 
 > **Note**
 >
-> The desktop app takes no admin token, and there is no way to give it one. It starts its backend with a fixed environment that does not include `AUDITOR_ADMIN_TOKEN`, so setting the variable in a launchd plist, your shell profile or the app's own environment has no effect. The desktop app binds `127.0.0.1` only, which keeps it out of the network-exposed posture that makes the token mandatory.
+> The desktop app takes no admin token, and there is no way to give it one. It starts its backend with a fixed environment that does not include `AUDITOR_ADMIN_TOKEN`, so setting the variable in a launchd plist, your shell profile or the app's own environment has no effect. The desktop app binds `127.0.0.1` only, which keeps it out of the network-exposed posture that makes the token mandatory. See [Tauri desktop shell](https://docs.privacytracker.privacykey.org/develop/tauri) for the variables the shell does hand the server.
 
 Confirm it's taking effect:
 
