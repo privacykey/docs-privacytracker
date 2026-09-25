@@ -78,7 +78,7 @@ privacytracker ships three install paths from one Next.js bundle. Pick whichever
     Container healthchecks hit `GET /api/ready` (DB reachable + data dir writable).
 
     <Note>
-      Since 21 September 2026 the image runs the Rust server, `pt-core serve`, in place of Next.js's `next start`: about 56 MB on Alpine, with no Node inside. Images built from `main`, and the published `latest` tag, have it; release images have it from the first release after v0.1.2. The Compose files, the volume, the port, the environment and the healthcheck are unchanged, and either image opens the database the other wrote. To go back to the Node image, which stays buildable until 1.0, add `PRIVACYTRACKER_BACKEND=node` to `.env` and run `docker compose up --build -d`.
+      Since 21 September 2026 the image runs the Rust server, `pt-core serve`, in place of Next.js's `next start`: about 56 MB on Alpine, with no Node inside. Images built from `main`, and the published `latest` tag, have it; release images have it from the first release after v0.1.2. The Compose files, the volume, the port, the environment and the healthcheck are unchanged, and either image opens the database the other wrote. To go back to the Node image, which stays buildable until v0.3.0 has shipped, add `PRIVACYTRACKER_BACKEND=node` to `.env` and run `docker compose up --build -d`.
     </Note>
   </Tab>
 </Tabs>
