@@ -3,7 +3,7 @@ title: Architecture
 description: "Codebase shape, data flow, three crash-safe runners, and the database model."
 ---
 
-A Next.js 16 App Router app, written in TypeScript, backed by a single local SQLite file. All scraping, parsing, AI calls, and snapshotting happen server-side inside API routes that import helpers from `lib/`. Tauri wraps the same Next.js bundle as a desktop app; Docker ships the same bundle as a self-hosted service.
+A Next.js 16 App Router app, written in TypeScript, backed by a single local SQLite file. All scraping, parsing, AI calls, and snapshotting happen server-side inside API routes that import helpers from `lib/`. Tauri wraps the same frontend as a desktop app, and Docker ships it as a self-hosted service. The server side has two implementations while the Node server is the rollback: `lib/` behind the Next.js API routes, and `core/`, a Rust port that answers the same API byte for byte. The Docker image runs `core/` (`pt-core serve`), and so does the desktop app from its first release on the Rust backend.
 
 <Note>
   This page is the "where do I look?" layer. The dense, byte-level engineering reference is in `AGENTS.md` and `CLAUDE.md` at the repo root — coding agents read those directly.
@@ -22,7 +22,7 @@ flowchart LR
     brew --> brewup[brew upgrade --cask]
 ```
 
-The same Next.js standalone bundle drives all three. Tauri runs it as a sidecar Node process; Docker runs it directly; Homebrew installs the same `.app` bundle as the desktop release.
+The same Next.js build drives all three. The Docker image serves it with the Rust server, `pt-core serve`; earlier images, v0.1.2's included, run Next.js's standalone bundle under Node instead. Homebrew installs the same `.app` bundle as the desktop release. The desktop app runs the standalone bundle as a sidecar Node process on releases before the Rust backend, and from the first release on it serves the same built frontend from the same Rust server, compiled into the app: see [Tauri & the backend](/develop/tauri).
 
 ## Shape of the codebase
 
@@ -36,6 +36,7 @@ privacytracker/
 │   ├── apps/[id]/              app detail + change history
 │   └── globals.css             design tokens, severity colours, .legal-layout primitives
 ├── lib/                        server-side logic — most of the product lives here
+├── core/                       the Rust server (pt-core): the same API, run by the Docker image and the desktop app
 ├── src-tauri/                  Rust desktop shell + sidecar lifecycle
 ├── scripts/                    out-of-band scripts (ios-app-import companion, screenshot capture, standalone staging)
 ├── deploy/                     reference reverse-proxy stacks (caddy/, traefik/)
@@ -43,7 +44,7 @@ privacytracker/
 ├── locales/                    en.json / zh.json translation bundles
 ├── public/                     static assets served by Next
 ├── docs/                       in-repo notes (the published site lives in docs-privacytracker)
-├── data/privacy.db             SQLite database (gitignored; bind-mounted in Docker)
+├── data/privacy.db             SQLite database (gitignored; in Docker, a Docker-managed volume)
 └── AGENTS.md / CLAUDE.md       coding-agent instructions
 ```
 

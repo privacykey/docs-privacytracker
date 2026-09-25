@@ -3,7 +3,7 @@ title: Configuration
 description: "AI providers, environment variables, background sync, notifications and webhooks, Wayback import, and the admin token."
 ---
 
-privacytracker stores almost all configuration in the SQLite `app_settings` key/value table, which means most settings are managed through the in-app **Settings** UI rather than `.env` files. Only a few values genuinely need to live outside the database.
+privacytracker stores almost all configuration in the SQLite `app_settings` key/value table, which means most settings are managed through the in-app **Settings** UI rather than `.env` files. Only a few values need to live outside the database.
 
 ## Environment variables
 
@@ -38,10 +38,11 @@ browser cannot load the app at all.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PRIVACYTRACKER_RUNTIME` | (unset) | Set to `desktop` by the Tauri sidecar launcher. Gates desktop-only surfaces and feature-flag resolution. |
+| `PRIVACYTRACKER_RUNTIME` | (unset) | Set to `desktop` by the desktop app's Tauri shell. Gates desktop-only surfaces and feature-flag resolution. |
 | `DEPLOYMENT` | (auto-detected) | Override the deployment label: `docker`, `tauri`, `homebrew`, or `node`. Auto-detection probes `/.dockerenv`, then the cgroup, then `HOMEBREW_PREFIX`, and falls back to `node`. The label's only effect is which upgrade command the update banner suggests — set it when auto-detection guesses wrong for your packaging. |
 | `WORKER_DISABLED` | (unset) | Set to `1` to force bulk SQLite writes to run inline on the main thread instead of on the `worker_threads` DB writer. Used by tests, and implied during production builds. Only the literal `1` is honoured. It does **not** disable background sync. |
 | `BUILD_STANDALONE` | (unset) | Build-time flag for `pnpm build:standalone` (the Tauri sidecar bundle). |
+| `PRIVACYTRACKER_BACKEND` | `rust` | Docker Compose only, read from `.env`: which server the image is built with (the Dockerfile's `BACKEND` build argument). `node` builds the Node image, which stays buildable as the rollback until 1.0. |
 
 Nothing suppresses the background scheduler tick from the environment — the 30-minute ticker in `instrumentation.ts` reads no environment variable. To stop scheduled sync, set the sync schedule to `manual` (see [Background sync](#background-sync)).
 

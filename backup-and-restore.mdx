@@ -10,10 +10,10 @@ privacytracker stores everything in a single SQLite file, which makes backup bor
 | Surface | Path |
 |---|---|
 | Desktop app (macOS) | `~/Library/Application Support/privacytracker/privacy.db` |
-| Docker | `./data/privacy.db` on the host (bind-mounted) |
+| Docker | `/app/data/privacy.db` in the `privacytracker-data` volume, or `./data/privacy.db` on the host with the bind-mount file |
 | From source | `./data/privacy.db` in the repo working directory |
 
-It's a single SQLite file plus optional `-wal` and `-shm` siblings while the app is running. WAL mode means you can copy `privacy.db` even while the app is running — the worst case is missing a few seconds of writes-in-flight, which is fine for backup. For a guaranteed-consistent copy, stop the app first.
+It's a single SQLite file plus `-wal` and `-shm` siblings while the app is running. Recent writes can sit in the `-wal` file until SQLite checkpoints them, so a copy of `privacy.db` alone, taken while the app runs, can miss them. Stop the app first, or use the backup bundle below.
 
 ## Quick file copy (simplest)
 
@@ -21,14 +21,16 @@ It's a single SQLite file plus optional `-wal` and `-shm` siblings while the app
 # macOS desktop app — quit the app first for a clean copy
 cp ~/Library/Application\ Support/privacytracker/privacy.db ~/backups/privacy-$(date +%F).db
 
-# Docker
-cp data/privacy.db ~/backups/privacy-$(date +%F).db
+# Docker: stop the container, copy the data directory out of its volume, start it again
+docker compose stop web
+docker compose cp web:/app/data ~/backups/privacytracker-$(date +%F)
+docker compose start web
 
 # From source
 cp data/privacy.db ../backups/privacy-$(date +%F).db
 ```
 
-Restore is the inverse — replace the file with the app stopped, then start it back up. Schema migrations run on boot, so an older backup restored into a newer release upgrades automatically.
+Restore is the inverse — replace the file with the app stopped, then start it back up. Schema migrations run on boot, so an older backup restored into a newer release upgrades automatically. On Docker, restore a backup bundle through **Settings → Backup** instead of copying files into the volume: files copied in with `docker compose cp` belong to `root`, and the server runs as the container's `audit` user.
 
 ## Backup bundle (versioned, app-aware)
 
@@ -142,7 +144,7 @@ The same versioned bundle works as the migration vehicle, with one caveat: the d
       --data-binary @privacytracker-export.json
     ```
 
-    The desktop sidecar serves on `127.0.0.1`; check **Settings → Admin → Deployment Diagnostics** for the port if 3000 is taken.
+    The desktop app serves on `127.0.0.1` at a port of its own, not 3000. The **Host** row under **Settings → Admin → Deployment Diagnostics** shows it; use it in both the URL and the `Origin` header. From the first release on the Rust backend the app keeps that port from one launch to the next, where earlier releases pick a new one at every launch.
   </Step>
 </Steps>
 
@@ -152,10 +154,10 @@ Same flow in reverse. Export from the desktop app's **Settings → Backup**, dro
 
 ### Source checkout → Docker (or vice versa)
 
-Both already use `./data/privacy.db` in the project root, so you can either:
+A source checkout keeps its database at `./data/privacy.db`. Docker does too with the bind-mount file (see [Installation → Docker](/installation)); otherwise it keeps it in the `privacytracker-data` volume. So you can either:
 
-- Copy the file directly between checkouts, or
-- Use the bundle export/import flow (recommended if you want migration to also handle schema upgrades).
+- Copy the file between the two when both use `./data`, or
+- Use the bundle export/import flow (recommended: it works with the volume, and it also handles schema upgrades).
 
 ## What's *not* in a backup
 

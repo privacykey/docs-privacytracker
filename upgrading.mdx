@@ -17,8 +17,8 @@ This page covers the version-agnostic process. For per-release notes — what sp
     # Desktop app
     cp ~/Library/Application\ Support/privacytracker/privacy.db ~/backups/privacy-pre-upgrade-$(date +%F).db
 
-    # Docker
-    cp data/privacy.db data/privacy.db.pre-upgrade
+    # Docker: the whole data directory, out of its volume
+    docker compose cp web:/app/data ./privacytracker-data-pre-upgrade
 
     # From source
     cp data/privacy.db ../privacy.db.pre-upgrade
@@ -37,7 +37,11 @@ This page covers the version-agnostic process. For per-release notes — what sp
     # Homebrew
     brew upgrade --cask privacytracker
 
-    # Docker
+    # Docker, from the checkout (the Compose file builds the image)
+    git pull --ff-only
+    docker compose up --build -d
+
+    # Docker, from a published image (the deploy/caddy and deploy/traefik examples)
     docker compose pull
     docker compose up -d
 
@@ -155,6 +159,10 @@ If you need to roll back:
 3. Reinstall the older version (Homebrew: `brew install --cask privacytracker@<version>` if a pinned cask exists, otherwise download the older `.dmg`; Docker: `docker compose pull <older-tag> && up`).
 
 Any data you wrote between the upgrade and the rollback is lost.
+
+<Note>
+  Rolling back across the release that moves the desktop app from its Node sidecar to a Rust backend works the same way. Both builds keep the database in the same data folder and the same format, and either opens what the other left behind, so the switch itself never stands in the way of going back to a release on Node. [Tauri & the backend](/develop/tauri) covers the move.
+</Note>
 
 ## Per-release notes
 
