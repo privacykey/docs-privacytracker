@@ -464,7 +464,7 @@ Container healthchecks hit `GET /api/ready` (DB reachable + data dir writable).
 
 > **Note**
 >
-> Since 21 September 2026 the image runs the Rust server, `pt-core serve`, in place of Next.js's `next start`: about 56 MB on Alpine, with no Node inside. Images built from `main`, and the published `latest` tag, have it; release images have it from the first release after v0.1.2. The Compose files, the volume, the port, the environment and the healthcheck are unchanged, and either image opens the database the other wrote. To go back to the Node image, which stays buildable until 1.0, add `PRIVACYTRACKER_BACKEND=node` to `.env` and run `docker compose up --build -d`.
+> Since 21 September 2026 the image runs the Rust server, `pt-core serve`, in place of Next.js's `next start`: about 56 MB on Alpine, with no Node inside. Images built from `main`, and the published `latest` tag, have it; release images have it from the first release after v0.1.2. The Compose files, the volume, the port, the environment and the healthcheck are unchanged, and either image opens the database the other wrote. To go back to the Node image, which stays buildable until v0.3.0 has shipped, add `PRIVACYTRACKER_BACKEND=node` to `.env` and run `docker compose up --build -d`.
 
 > **Note**
 >
@@ -579,7 +579,7 @@ browser cannot load the app at all.
 | `DEPLOYMENT` | (auto-detected) | Override the deployment label: `docker`, `tauri`, `homebrew`, or `node`. Auto-detection probes `/.dockerenv`, then the cgroup, then `HOMEBREW_PREFIX`, and falls back to `node`. The label's only effect is which upgrade command the update banner suggests — set it when auto-detection guesses wrong for your packaging. |
 | `WORKER_DISABLED` | (unset) | Set to `1` to force bulk SQLite writes to run inline on the main thread instead of on the `worker_threads` DB writer. Used by tests, and implied during production builds. Only the literal `1` is honoured. It does **not** disable background sync. |
 | `BUILD_STANDALONE` | (unset) | Build-time flag for `pnpm build:standalone` (the Tauri sidecar bundle). |
-| `PRIVACYTRACKER_BACKEND` | `rust` | Docker Compose only, read from `.env`: which server the image is built with (the Dockerfile's `BACKEND` build argument). `node` builds the Node image, which stays buildable as the rollback until 1.0. |
+| `PRIVACYTRACKER_BACKEND` | `rust` | Docker Compose only, read from `.env`: which server the image is built with (the Dockerfile's `BACKEND` build argument). `node` builds the Node image, which stays buildable as the rollback until v0.3.0 has shipped. |
 
 Nothing suppresses the background scheduler tick from the environment — the 30-minute ticker in `instrumentation.ts` reads no environment variable. To stop scheduled sync, set the sync schedule to `manual` (see [Background sync](#background-sync)).
 
