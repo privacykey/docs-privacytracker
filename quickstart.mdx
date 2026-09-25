@@ -49,12 +49,14 @@ privacytracker is designed to be self-hosted on your own machine. The fastest pa
     ```bash
     git clone https://github.com/privacykey/privacytracker.git
     cd privacytracker
+    echo "AUDITOR_ADMIN_TOKEN=$(openssl rand -hex 32)" >> .env
+    chmod 600 .env
     docker compose up --build -d
     ```
 
-    The SQLite database is bind-mounted at `./data/privacy.db` on the host, so your data survives container rebuilds.
+    Docker always requires the admin token: Compose won't start without it, and it's what you sign in with. The SQLite database lives in a Docker-managed volume, `privacytracker-data`, so your data survives container rebuilds.
 
-    Open [http://localhost:3000](http://localhost:3000).
+    Open [http://localhost:3000](http://localhost:3000) and sign in with the token from `.env`.
 
     On macOS without Docker Desktop, [Colima](https://github.com/abiosoft/colima) is a lightweight alternative — see [Installation](/installation#colima) for the full setup.
   </Tab>

@@ -17,8 +17,8 @@ This page covers the version-agnostic process. For per-release notes — what sp
     # Desktop app
     cp ~/Library/Application\ Support/privacytracker/privacy.db ~/backups/privacy-pre-upgrade-$(date +%F).db
 
-    # Docker
-    cp data/privacy.db data/privacy.db.pre-upgrade
+    # Docker: the whole data directory, out of its volume
+    docker compose cp web:/app/data ./privacytracker-data-pre-upgrade
 
     # From source
     cp data/privacy.db ../privacy.db.pre-upgrade
@@ -37,7 +37,11 @@ This page covers the version-agnostic process. For per-release notes — what sp
     # Homebrew
     brew upgrade --cask privacytracker
 
-    # Docker
+    # Docker, from the checkout (the Compose file builds the image)
+    git pull --ff-only
+    docker compose up --build -d
+
+    # Docker, from a published image (the deploy/caddy and deploy/traefik examples)
     docker compose pull
     docker compose up -d
 
