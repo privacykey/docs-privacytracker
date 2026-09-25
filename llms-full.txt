@@ -2984,7 +2984,7 @@ A short reference for terms that show up across the app, the API, and the codeba
 
 **Tauri.** The Rust framework that wraps the Next.js bundle as a signed, notarized desktop app on macOS. Uses Tauri's updater with ed25519 signature verification.
 
-**Sidecar.** The Node process that runs the server inside the desktop app on releases before the Rust backend: the same Next.js standalone bundle that runs in Docker, launched as a child process by the Rust shell. From the first release on the Rust backend the server is compiled into the app, and no Node ships with it. See [Tauri & the backend](https://docs.privacytracker.privacykey.org/develop/tauri).
+**Sidecar.** The Node process that runs the server inside the desktop app on releases before the Rust backend: the same Next.js standalone bundle that Docker images before the Rust server run, launched as a child process by the Rust shell. From the first release on the Rust backend the server is compiled into the app, and no Node ships with it. See [Tauri & the backend](https://docs.privacytracker.privacykey.org/develop/tauri).
 
 **Standalone build.** The output of `npm run build:standalone` (with `BUILD_STANDALONE=1` set). Self-contained Next.js bundle suitable for the sidecar or any external runtime.
 
@@ -3703,7 +3703,7 @@ flowchart LR
     brew --> brewup[brew upgrade --cask]
 ```
 
-The same Next.js build drives all three. Docker runs its standalone bundle directly, and Homebrew installs the same `.app` bundle as the desktop release. The desktop app runs that bundle as a sidecar Node process on releases before the Rust backend, and from the first release on it serves the same built frontend from a server compiled into the app: see [Tauri & the backend](https://docs.privacytracker.privacykey.org/develop/tauri).
+The same Next.js build drives all three. The Docker image serves it with the Rust server, `pt-core serve`; earlier images, v0.1.2's included, run Next.js's standalone bundle under Node instead. Homebrew installs the same `.app` bundle as the desktop release. The desktop app runs the standalone bundle as a sidecar Node process on releases before the Rust backend, and from the first release on it serves the same built frontend from the same Rust server, compiled into the app: see [Tauri & the backend](https://docs.privacytracker.privacykey.org/develop/tauri).
 
 ## Shape of the codebase
 
@@ -4169,7 +4169,7 @@ The Rust shell owns the window, the menu bar, deep links, and the auto-updater. 
 
 Three constraints pulled the design here:
 
-1. **One frontend, three distribution surfaces.** Docker users get the Next.js bundle directly. Homebrew installs the same `.app` Tauri produces. The desktop app serves the same built frontend from its Rust backend, which answers the same HTTP API as the Node server, so every UI change reaches all three. Releases before the Rust backend run the Next.js bundle itself as a child process.
+1. **One frontend, three distribution surfaces.** Docker users get the same built frontend, served by the same Rust server running on its own (`pt-core serve`). Homebrew installs the same `.app` Tauri produces. The desktop app serves that frontend from the Rust backend compiled into it, which answers the same HTTP API as the Node server, so every UI change reaches all three. Releases before the Rust backend run the Next.js bundle itself as a child process.
 2. **Native file-system access for backups + diagnostics.** Pure-web app would need to ask the user every time it touched a file. Tauri exposes safe file IO through the Rust IPC layer.
 3. **Signed auto-updates.** macOS Gatekeeper + ed25519-verified patches = silent, safe updates. A Docker user has no equivalent; they `docker compose pull` manually.
 

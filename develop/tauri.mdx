@@ -31,7 +31,7 @@ The Rust shell owns the window, the menu bar, deep links, and the auto-updater. 
 
 Three constraints pulled the design here:
 
-1. **One frontend, three distribution surfaces.** Docker users get the Next.js bundle directly. Homebrew installs the same `.app` Tauri produces. The desktop app serves the same built frontend from its Rust backend, which answers the same HTTP API as the Node server, so every UI change reaches all three. Releases before the Rust backend run the Next.js bundle itself as a child process.
+1. **One frontend, three distribution surfaces.** Docker users get the same built frontend, served by the same Rust server running on its own (`pt-core serve`). Homebrew installs the same `.app` Tauri produces. The desktop app serves that frontend from the Rust backend compiled into it, which answers the same HTTP API as the Node server, so every UI change reaches all three. Releases before the Rust backend run the Next.js bundle itself as a child process.
 2. **Native file-system access for backups + diagnostics.** Pure-web app would need to ask the user every time it touched a file. Tauri exposes safe file IO through the Rust IPC layer.
 3. **Signed auto-updates.** macOS Gatekeeper + ed25519-verified patches = silent, safe updates. A Docker user has no equivalent; they `docker compose pull` manually.
 
