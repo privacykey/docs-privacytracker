@@ -15,7 +15,7 @@ Three rules:
 
 1. **One docs version per *app* major.minor.** Major version `2.x` and minor `1.2` each get their own version slot. Patch versions (`1.1.1`, `1.1.2`, …) ride along on the parent minor's docs — patches don't change docs by definition.
 2. **The default version is always the latest.** Visitors land on the most-recent version unless they pick an older one from the version switcher.
-3. **Old versions are read-only.** Once `v1.1` is archived because `v1.2` shipped, we don't backport docs fixes to `v1.1` unless the fix is genuinely about the v1.1 codepath. Typos and broken links on archived versions stay there.
+3. **Old versions are read-only.** Once `v1.1` is archived because `v1.2` shipped, we don't backport docs fixes to `v1.1` unless the fix addresses behaviour specific to the v1.1 codepath. Typos and broken links on archived versions stay there.
 
 ## When to cut a new version
 

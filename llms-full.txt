@@ -88,7 +88,7 @@ Source: https://docs.privacytracker.privacykey.org/alternatives
 
 An evenhanded look at privacytracker, the things it overlaps with (Apple's labels and Privacy Report, ToS;DR, PrivacySpy, Exodus Privacy), and when each is the better fit.
 
-privacytracker isn't the only way to think harder about app privacy. This page lays out what it does well, what other tools do better, and where you'd genuinely want both. The goal is to help you decide whether to install it — including the "actually, no" answer when something else fits your situation better.
+privacytracker is one way to check an app's privacy practices. This page explains where it helps, where other tools do better, and when to use both. Use it to decide whether privacytracker fits your needs.
 
 > **Note**
 >
@@ -197,7 +197,7 @@ If you have devices on both platforms: Exodus for Android, privacytracker for iO
 
 ### **Just disabling tracking in iOS Settings**
 
-Settings → Privacy & Security → Tracking → *Allow Apps to Request to Track* off. This denies the IDFA to apps and is genuinely effective at limiting cross-app advertising tracking.
+Settings → Privacy & Security → Tracking → *Allow Apps to Request to Track* off. This denies the IDFA to apps and limits cross-app advertising tracking.
 
 It does not:
 
@@ -523,7 +523,7 @@ Source: https://docs.privacytracker.privacykey.org/configuration
 
 AI providers, environment variables, background sync, notifications and webhooks, Wayback import, and the admin token.
 
-privacytracker stores almost all configuration in the SQLite `app_settings` key/value table, which means most settings are managed through the in-app **Settings** UI rather than `.env` files. Only a few values genuinely need to live outside the database.
+privacytracker stores almost all configuration in the SQLite `app_settings` key/value table, which means most settings are managed through the in-app **Settings** UI rather than `.env` files. Only a few values need to live outside the database.
 
 ## Environment variables
 
@@ -1351,7 +1351,7 @@ The bulk runner handles 429 gracefully: it bails out of the loop on the first 42
 
 Practical implication: **if you're tracking more than ~200 apps on a single IP, set sync to weekly rather than daily.** You'll probably trip 429s on a daily cadence and nothing useful will come of it. Weekly cadence on 500 apps comfortably finishes in one tick.
 
-If you genuinely need to track thousands of apps, route the scrape egress through multiple IPs (separate VPN endpoints, residential proxies). privacytracker doesn't ship a built-in IP-rotation feature; you'd build it at the network layer.
+If you need to track thousands of apps, route the scrape egress through multiple IPs (separate VPN endpoints, residential proxies). privacytracker doesn't ship a built-in IP-rotation feature; you'd build it at the network layer.
 
 ## AI summarisation cost
 
@@ -1729,7 +1729,7 @@ Local providers (Ollama, llama.cpp, LM Studio, vLLM) keep all of this on your ma
 
 If you paste an incoming-webhook URL into the desktop app's *Keep privacytracker running in the background* wizard (or write `notification_webhook_url` through `POST /api/settings` on any build), privacytracker POSTs notifications to that URL. Off by default — an empty URL, or `notification_webhook_frequency = off`, disables it entirely.
 
-The receiving service sees **app names and change summaries**, such as *"Instagram: 2 new categories under Data Used to Track You"*. With [Privacy policy updates](https://docs.privacytracker.privacykey.org/configuration#notifications) on, which it isn't by default, it also learns which apps' privacy policies changed and the host name in each policy's link, as in *"Spotify: Privacy policy text changed at spotify.com."* It does not see your annotations, privacy profile, AI keys, or the underlying policy text. Four payload shapes are supported (`slack`, `discord`, `teams`, `generic`); `generic` additionally carries the structured rows under `notifications`.
+The receiving service sees **app names and change summaries**, such as *"Instagram: 2 new categories under Data Used to Track You"*. With [Privacy policy updates](https://docs.privacytracker.privacykey.org/configuration#notifications) on, which it isn't by default, it also learns which apps' privacy policies changed and the host name in each policy's link, as in *"Spotify: Privacy policy text changed at spotify.com."* It does not see your annotations, privacy profile, AI keys, or the underlying policy text. Four payload shapes are supported (`slack`, `discord`, `teams`, `generic`); The `generic` payload also carries the structured rows under `notifications`.
 
 Delivery is either immediate or a daily or weekly batch posted from the 30-minute tick. Immediate delivery posts each App Store change (privacy labels, accessibility labels or age rating) as soon as a sync has saved it, and each privacy-policy change as it's raised, during quiet hours too. The batches carry the notifications raised since the previous one. Neither applies the bell's per-type filters, so a change the bell leaves out is still sent. Requests go out through the same `safeFetch` SSRF, size, and timeout guards as `/api/scrape`. Since this is a third-party chat service, treat it as you would any other outbound integration: pick a private channel.
 
@@ -5796,7 +5796,7 @@ Three rules:
 
 1. **One docs version per *app* major.minor.** Major version `2.x` and minor `1.2` each get their own version slot. Patch versions (`1.1.1`, `1.1.2`, …) ride along on the parent minor's docs — patches don't change docs by definition.
 2. **The default version is always the latest.** Visitors land on the most-recent version unless they pick an older one from the version switcher.
-3. **Old versions are read-only.** Once `v1.1` is archived because `v1.2` shipped, we don't backport docs fixes to `v1.1` unless the fix is genuinely about the v1.1 codepath. Typos and broken links on archived versions stay there.
+3. **Old versions are read-only.** Once `v1.1` is archived because `v1.2` shipped, we don't backport docs fixes to `v1.1` unless the fix addresses behaviour specific to the v1.1 codepath. Typos and broken links on archived versions stay there.
 
 ## When to cut a new version
 
