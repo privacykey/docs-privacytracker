@@ -394,7 +394,7 @@ privacytracker ships three install paths from one Next.js bundle. Pick whichever
 
 **Desktop app (macOS)**
 
-Signed and notarized for both Apple Silicon (`aarch64`) and Intel (`x86_64`).
+Signed and notarized for both Apple Silicon (`aarch64`) and Intel (`x86_64`). From v0.2 on it needs macOS 13.5 or later; v0.1.2 runs on macOS 11 and later.
 
 **Step 1: Download the latest .dmg**
 
@@ -409,6 +409,18 @@ Gatekeeper opens it without the "unidentified developer" warning because the bui
 The SQLite database is created at `~/Library/Application Support/privacytracker/` and survives app updates.
 
 Auto-updates use [Tauri's updater](https://tauri.app/) with an ed25519 signature check on every patch.
+
+> **Note**
+>
+> The desktop app is moving off its bundled Node process onto a Rust backend built into the app. The first release on it hasn't been published as of September 2026; v0.1.2, the latest, runs on Node. From that release on:
+>
+> - The app serves itself, with no separate Node process, and nothing is unpacked into the data folder: the frontend ships read-only inside the signed app. Earlier releases extract a ~200 MB `standalone/` folder there; once you've moved to the Rust backend nothing uses it, and you can delete it.
+> - The data folder stays where it is, and either build opens the database the other left behind, so the switch never stands in the way of [going back](https://docs.privacytracker.privacykey.org/upgrading#rolling-back) to a release on Node.
+> - The app reuses the local port it had last time, so what a page keeps in the browser, such as the accessibility quick toggles, survives a relaunch unless something else has taken the port. Earlier releases lose it at every launch.
+> - The licence notices ship inside the app, in `Contents/Resources/third-party/`: `NOTICE`, `LICENSE`, `V8-LICENSE` and `THIRD-PARTY-RUST.md`, which lists every Rust crate compiled in. The app's **Legal** page names the crates chosen directly and links the full list.
+> - macOS 13.5 stays the minimum.
+>
+> [Tauri & the backend](https://docs.privacytracker.privacykey.org/develop/tauri) has the details.
 
 **Homebrew (macOS)**
 
@@ -546,7 +558,7 @@ browser cannot load the app at all.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PRIVACYTRACKER_RUNTIME` | (unset) | Set to `desktop` by the Tauri sidecar launcher. Gates desktop-only surfaces and feature-flag resolution. |
+| `PRIVACYTRACKER_RUNTIME` | (unset) | Set to `desktop` by the desktop app's Tauri shell. Gates desktop-only surfaces and feature-flag resolution. |
 | `DEPLOYMENT` | (auto-detected) | Override the deployment label: `docker`, `tauri`, `homebrew`, or `node`. Auto-detection probes `/.dockerenv`, then the cgroup, then `HOMEBREW_PREFIX`, and falls back to `node`. The label's only effect is which upgrade command the update banner suggests — set it when auto-detection guesses wrong for your packaging. |
 | `WORKER_DISABLED` | (unset) | Set to `1` to force bulk SQLite writes to run inline on the main thread instead of on the `worker_threads` DB writer. Used by tests, and implied during production builds. Only the literal `1` is honoured. It does **not** disable background sync. |
 | `BUILD_STANDALONE` | (unset) | Build-time flag for `pnpm build:standalone` (the Tauri sidecar bundle). |
@@ -1577,7 +1589,7 @@ curl -X POST "http://localhost:3000/api/backup/restore?allowUntrusted=1" \
   --data-binary @privacytracker-export.json
 ```
 
-The desktop sidecar serves on `127.0.0.1`; check **Settings → Admin → Deployment Diagnostics** for the port if 3000 is taken.
+The desktop app serves on `127.0.0.1` at a port of its own, not 3000. The **Host** row under **Settings → Admin → Deployment Diagnostics** shows it; use it in both the URL and the `Origin` header. From the first release on the Rust backend the app keeps that port from one launch to the next, where earlier releases pick a new one at every launch.
 
 ### Desktop app → Docker
 
@@ -1914,7 +1926,7 @@ When a recipient imports a bundle, they see your annotations attributed to your 
 
 ## Runtime and database boundaries
 
-privacytracker is designed as a single-user, local-first tool. **Run only one runtime against a given SQLite database at a time** — a Docker/Node process, *or* the desktop sidecar, not both sharing the same `privacy.db`. SQLite WAL mode handles ordinary contention inside one process, but two app processes writing the same database is outside the supported security and data-integrity model.
+privacytracker is designed as a single-user, local-first tool. **Run only one runtime against a given SQLite database at a time**: a Docker/Node process *or* the desktop app, not both sharing the same `privacy.db`. SQLite WAL mode handles ordinary contention inside one process, but two app processes writing the same database is outside the supported security and data-integrity model.
 
 If you want to run multiple instances (e.g., one per family member), use **separate `data/` directories** per instance. The in-app [device menu](https://docs.privacytracker.privacykey.org/devices#the-device-menu) separates family members' devices within one install, but it's a filter, not an access boundary — use separate instances when their data must stay apart.
 
@@ -2526,6 +2538,10 @@ If you need to roll back:
 
 Any data you wrote between the upgrade and the rollback is lost.
 
+> **Note**
+>
+> Rolling back across the release that moves the desktop app from its Node sidecar to a Rust backend works the same way. Both builds keep the database in the same data folder and the same format, and either opens what the other left behind, so the switch itself never stands in the way of going back to a release on Node. [Tauri & the backend](https://docs.privacytracker.privacykey.org/develop/tauri) covers the move.
+
 ## Per-release notes
 
 The [Changelog](https://docs.privacytracker.privacykey.org/changelog) mirrors `CHANGELOG.md` from the main repo. As releases land, this page should grow a per-version section here too — covering anything that *isn't* automatic and what to manually verify after upgrading.
@@ -2968,7 +2984,7 @@ A short reference for terms that show up across the app, the API, and the codeba
 
 **Tauri.** The Rust framework that wraps the Next.js bundle as a signed, notarized desktop app on macOS. Uses Tauri's updater with ed25519 signature verification.
 
-**Sidecar.** The bundled Node runtime that ships inside the Tauri app — the same Next.js standalone bundle that runs in Docker, just launched as a child process by the Rust shell.
+**Sidecar.** The Node process that runs the server inside the desktop app on releases before the Rust backend: the same Next.js standalone bundle that Docker images before the Rust server run, launched as a child process by the Rust shell. From the first release on the Rust backend the server is compiled into the app, and no Node ships with it. See [Tauri & the backend](https://docs.privacytracker.privacykey.org/develop/tauri).
 
 **Standalone build.** The output of `npm run build:standalone` (with `BUILD_STANDALONE=1` set). Self-contained Next.js bundle suitable for the sidecar or any external runtime.
 
@@ -4792,7 +4808,7 @@ flowchart LR
     brew --> brewup[brew upgrade --cask]
 ```
 
-The same Next.js standalone bundle drives all three. Tauri runs it as a sidecar Node process; Docker runs it directly; Homebrew installs the same `.app` bundle as the desktop release.
+The same Next.js build drives all three. The Docker image serves it with the Rust server, `pt-core serve`; earlier images, v0.1.2's included, run Next.js's standalone bundle under Node instead. Homebrew installs the same `.app` bundle as the desktop release. The desktop app runs the standalone bundle as a sidecar Node process on releases before the Rust backend, and from the first release on it serves the same built frontend from the same Rust server, compiled into the app: see [Tauri & the backend](https://docs.privacytracker.privacykey.org/develop/tauri).
 
 ## Shape of the codebase
 
@@ -5225,14 +5241,18 @@ Collapses every flag to its hard default. Use this if a release misbehaves; flip
 - **Annotations** (`annotations` table) sit on top of the flag system. Private notes (`visibility = 'private'`) are unconditionally excluded from audit-bundle exports at the SQL level — there is no force-include path.
 - **Audit bundle export** (`lib/audit-bundle.ts`) honours visibility, focus state, and quarantined overrides.
 
-# Tauri & sidecar
+# Tauri & the backend
 Source: https://docs.privacytracker.privacykey.org/develop/tauri
 
-How the desktop app wraps the Next.js bundle, the sidecar Node runtime, and the ed25519-verified update flow.
+How the desktop app wraps the Next.js frontend, the Rust backend that serves it from inside the app, the Node sidecar that backend replaces, and the ed25519-verified update flow.
 
-The same Next.js bundle that runs under Docker also runs inside a [Tauri](https://tauri.app) shell as a signed, notarized macOS desktop app. This page is for people who want to *build* or *contribute to* that desktop surface — what Tauri actually does, what the sidecar runtime is, and how updates flow.
+The same Next.js frontend that runs under Docker also runs inside a [Tauri](https://tauri.app) shell as a signed, notarized macOS desktop app. This page is for people who want to *build* or *contribute to* that desktop surface: what Tauri actually does, what serves the app inside it, and how updates flow.
 
 If you just want to install the desktop app, see [Installation → Desktop app](https://docs.privacytracker.privacykey.org/installation). If you want to build it from source, see [Build from source](https://docs.privacytracker.privacykey.org/develop/build-from-source).
+
+> **Note**
+>
+> The desktop app is moving off its bundled Node process onto a Rust backend compiled into the app. Where the two differ, this page describes the app as it ships from the first release on the Rust backend, and [The sidecar Node runtime](#the-sidecar-node-runtime) covers the releases before it. That first release hasn't been published as of September 2026: v0.1.2, the latest release, runs on Node. The [Changelog](https://docs.privacytracker.privacykey.org/changelog) names the release that makes the switch once it's out.
 
 ## The big picture
 
@@ -5240,27 +5260,55 @@ If you just want to install the desktop app, see [Installation → Desktop app](
 flowchart LR
     user[macOS user] --> app[privacytracker.app]
     app --> tauri[Tauri shell<br/>Rust + WebView]
-    tauri --> sidecar[Sidecar Node runtime<br/>spawned child process]
-    sidecar --> bundle[Next.js standalone bundle<br/>same as Docker]
-    bundle --> sqlite[(privacy.db)]
+    tauri --> server[Rust backend<br/>in the same process]
+    server --> site[Next.js frontend<br/>read-only in the bundle]
+    server --> sqlite[(privacy.db)]
     tauri --> updater[Tauri updater<br/>polls GitHub releases]
     updater --> ed25519[ed25519 signature check]
     ed25519 -- pass --> apply[apply patch]
 ```
 
-The Rust shell owns the window, the menu bar, deep links, and the auto-updater. It spawns the sidecar Node process at startup and proxies the WebView to it on `127.0.0.1:<dynamic-port>`. The user's browser-equivalent (WKWebView) loads the same UI a Docker user sees through Chrome.
+The Rust shell owns the window, the menu bar, deep links, and the auto-updater. It also runs the server: the backend is compiled into the same binary and serves the app on `127.0.0.1:<port>`, reusing the port it had last time. The user's browser-equivalent (WKWebView) loads the same UI a Docker user sees through Chrome. Releases before the Rust backend spawn a Node process for the server instead.
 
 ## Why this shape
 
 Three constraints pulled the design here:
 
-1. **One Next.js bundle, three distribution surfaces.** Docker users get the bundle directly. Homebrew installs the same `.app` Tauri produces. Tauri runs the bundle as a child process. Maintaining one runtime to rule them all means the desktop app inherits every API change and every bug fix without parallel codebases.
+1. **One frontend, three distribution surfaces.** Docker users get the same built frontend, served by the same Rust server running on its own (`pt-core serve`). Homebrew installs the same `.app` Tauri produces. The desktop app serves that frontend from the Rust backend compiled into it, which answers the same HTTP API as the Node server, so every UI change reaches all three. Releases before the Rust backend run the Next.js bundle itself as a child process.
 2. **Native file-system access for backups + diagnostics.** Pure-web app would need to ask the user every time it touched a file. Tauri exposes safe file IO through the Rust IPC layer.
 3. **Signed auto-updates.** macOS Gatekeeper + ed25519-verified patches = silent, safe updates. A Docker user has no equivalent; they `docker compose pull` manually.
 
+## The Rust backend
+
+From the first release on the Rust backend there is no second process. When `privacytracker.app` launches:
+
+**Step 1: Tauri finds the data directory**
+
+`src-tauri/src/backend.rs` resolves `~/Library/Application Support/privacytracker`, the directory the sidecar releases use, for either backend, so either build finds the database the other wrote.
+
+**Step 2: Tauri binds the port it had last time, if it can**
+
+The last port is kept in `.desktop-port` in the data directory. If it's still free, the app binds `127.0.0.1` on it again; if anything else has it, the app takes a free port and remembers that one instead. A page's origin includes its port, so keeping the port keeps what the page stores in the browser, such as the accessibility quick toggles, from one launch to the next. The sidecar takes a fresh random port at every launch, which loses that state every time.
+
+**Step 3: The server starts inside the app**
+
+`src-tauri/src/embedded.rs` starts the server on that listener, in the app's own process. It opens and migrates `privacy.db`, starts the scheduled jobs, and serves the frontend from `Contents/Resources/site`, read-only inside the signed bundle. Nothing is extracted into the data directory.
+
+The server doesn't read the app's environment. The shell hands it a fixed set of variables, such as the data directory, a loopback bind and `PRIVACYTRACKER_RUNTIME=desktop`, and never an admin token, much as the sidecar starts Node from a cleared environment. Nothing in the app's own environment changes who may call the API.
+
+**Step 4: The WebView loads the app**
+
+There's nothing to wait for: the listener is bound and the server is ready before the window loads `http://127.0.0.1:<port>/`.
+
+**Step 5: Quitting stops the server**
+
+`Cmd-Q`, tray Quit, menu-bar Quit and updater restart all route through `RunEvent::ExitRequested`. The server stops accepting connections and ends its scheduled jobs, and requests in flight get up to **3 seconds**, the grace the sidecar gets between SIGTERM and SIGKILL. A bulk run cut off there resumes on the next launch, as it does after a crash.
+
+Because the server lives in the app's process, it can't outlive the app and hold on to the SQLite WAL and the port, which is what the sidecar needs its watchdog for. Its log lines also land in the shell's log file (see [Filesystem layout on disk](#filesystem-layout-on-disk)). The minimum stays macOS 13.5: dropping Node doesn't lower it.
+
 ## The sidecar Node runtime
 
-When `privacytracker.app` launches:
+Releases before the Rust backend run the server as a separate Node process, the sidecar. When one of them launches:
 
 **Step 1: Tauri picks a free port**
 
@@ -5290,6 +5338,8 @@ Why a sidecar instead of embedding Node into the Rust binary? Two reasons. First
 
 ## Bundling the right Node
 
+Only the sidecar releases carry Node. The Rust backend bundles none, so nothing in this section applies to it.
+
 `src-tauri/binaries/` ships a Node runtime per supported architecture:
 
 ```
@@ -5311,11 +5361,13 @@ The version is intentionally pinned — better-sqlite3's native `.node` add-on i
 
 ## Standalone build mode
 
+The Rust backend doesn't use a standalone tree. It serves the regular `next build` output, copied into the bundle's `site/` folder: the prerendered pages, the static chunks and `public/`, about 9 MB, and no server code.
+
 The sidecar runs `npm run build:standalone`, which is `BUILD_STANDALONE=1 next build --webpack && node ./scripts/stage-standalone.mjs`.
 
 Two things differ from the regular `npm run build`:
 
-1. **`BUILD_STANDALONE=1`** flips `next.config.js` into Next.js's [standalone output mode](https://nextjs.org/docs/app/building-your-application/deploying#docker-image), which produces a self-contained `.next/standalone/` directory with a minimal `node_modules` containing only what's actually used at runtime. The whole bundle is ~30 MB instead of the ~500 MB a `node_modules`-and-all build would be.
+1. **`BUILD_STANDALONE=1`** flips `next.config.js` into Next.js's [standalone output mode](https://nextjs.org/docs/app/building-your-application/deploying#docker-image), which produces a self-contained `.next/standalone/` directory with a minimal `node_modules` containing only what's actually used at runtime. Even so, the tree the sidecar releases ship comes to about 200 MB.
 2. **`scripts/stage-standalone.mjs`** copies the standalone output, the public assets, and the better-sqlite3 native module into the right layout for `src-tauri/binaries` to pick up.
 
 The stage script also strips dev-only files (test fixtures, source maps, the iPhone import helper's Python tests) that aren't needed at runtime.
@@ -5368,21 +5420,38 @@ The updater has no opt-out switch — the plugin is registered unconditionally i
 ├── privacy.db-shm                     shared-memory file
 ├── backup-signing.key                 per-install HMAC key for backup bundles (0600)
 ├── backups/                           server-local rolling snapshots (Settings → Backup)
-├── standalone/                        Next.js standalone tree, extracted on first run
-└── .standalone-extracted-from-size-mtime   marker: which tarball the tree came from
+└── .desktop-port                      the port to try first at the next launch
 ```
 
-There is no `logs/` directory here. `tauri-plugin-log` writes to Tauri's `LogDir` — `~/Library/Logs/org.privacykey.privacytracker/` on macOS — as a single rolling file holding the Rust shell's log. **Settings → Show log folder** opens it (the `open_log_dir` command).
+This is the directory the sidecar releases use, and the Rust backend keeps the database in the same format. Either build opens what the other left behind, WAL included, which is what makes a rollback from the Rust backend to a Node build safe.
 
-There is no `sidecar.log` at all. The Node sidecar's stdout and stderr are `Stdio::inherit()`, so its output goes to the parent's stdout — visible only when the app is launched from a terminal:
+Nothing is extracted here any more. The sidecar releases unpack a ~200 MB standalone tree into `standalone/`, with a `.standalone-extracted-from-size-mtime` marker beside it, on first run and again after every update. The Rust backend never reads either and leaves both where an earlier release put them. You can delete them to get the space back; a sidecar release extracts a fresh copy if you go back to one.
+
+There is no `logs/` directory here. `tauri-plugin-log` writes to Tauri's `LogDir` (`~/Library/Logs/org.privacykey.privacytracker/` on macOS) as a single rolling file holding the Rust shell's log. **Settings → Show log folder** opens it (the `open_log_dir` command). On the Rust backend the server's log lines go there too, because the server logs through the same `log` facade, in the same process.
+
+There is no `sidecar.log` at all. On the sidecar releases, Node's stdout and stderr are `Stdio::inherit()`, so its output goes to the parent's stdout, visible only when the app is launched from a terminal:
 
 ```bash
 /Applications/privacytracker.app/Contents/MacOS/privacytracker
 ```
 
-That's the diagnostic mode to reach for when boot fails.
+That's the diagnostic mode to reach for when boot fails, on either backend: a backend that can't start prints the reason there before the app exits.
 
 The `data/` directory you'd see in a Docker install corresponds to this entire folder on the desktop. A backup bundle from one is restorable into the other, with the untrusted opt-in — see [Backup & restore → Migrating between install paths](https://docs.privacytracker.privacykey.org/backup-and-restore#migrating-between-install-paths).
+
+On the Rust backend, the frontend and the licence notices ship inside the signed bundle:
+
+```
+/Applications/privacytracker.app/Contents/Resources/
+├── site/                              the frontend the server serves, read-only
+└── third-party/
+    ├── NOTICE                         privacytracker's own notice
+    ├── LICENSE                        the Apache-2.0 licence that notice refers to
+    ├── V8-LICENSE                     for the ports of V8's date parser and JSON.parse error messages
+    └── THIRD-PARTY-RUST.md            every Rust crate compiled into the app, with version, licence and source
+```
+
+The app's Legal page (`/legal`, the **Legal** link at the bottom left of every page) names the crates chosen directly, gives the licence breakdown, and links the full list.
 
 ## Touch ID
 
@@ -5400,8 +5469,9 @@ Touch ID is also deliberately *not* used to derive backup-encryption keys — bu
 
 ## Things that commonly trip people up
 
+- **The app quits as soon as it opens (Rust backend).** The backend couldn't start, so no window appears. Launch the binary from Terminal (`/Applications/privacytracker.app/Contents/MacOS/privacytracker`): the line starting `[privacytracker] FATAL: failed to start the backend` gives the reason. If it says it could not find a built frontend, the bundle is incomplete; reinstall it from the latest DMG.
 - **Sidecar fails to start with `NODE_MODULE_VERSION X does not match Y`.** better-sqlite3's native module was built against a different Node ABI. Either rebuild it (`npm rebuild better-sqlite3`) against the bundled Node version, or update the bundled Node to match. The [Tauri Bundled Node guide on the Plane board](https://sites.plane.so/issues/39b6604351894f09a5e903acce37d265) has the recipe.
-- **App opens but the WebView is blank.** The sidecar didn't answer `/api/apps` within the 60-second readiness deadline. Relaunch from Terminal (`/Applications/privacytracker.app/Contents/MacOS/privacytracker`) to see the sidecar's stdout, and check `~/Library/Logs/org.privacykey.privacytracker/` for the Rust shell's log. Usually it's a database lock from a previous bad shutdown (delete `privacy.db-wal` and `privacy.db-shm` while the app is closed) or a port conflict (rare on macOS, more common on Linux).
+- **App opens but the WebView is blank (sidecar releases).** The sidecar didn't answer `/api/apps` within the 60-second readiness deadline. Relaunch from Terminal (`/Applications/privacytracker.app/Contents/MacOS/privacytracker`) to see the sidecar's stdout, and check `~/Library/Logs/org.privacykey.privacytracker/` for the Rust shell's log. Usually it's a database lock from a previous bad shutdown (delete `privacy.db-wal` and `privacy.db-shm` while the app is closed) or a port conflict (rare on macOS, more common on Linux).
 - **Auto-update gets stuck.** Tauri caches the *checked* state for 24h regardless of outcome. To force a re-check: quit the app, delete `~/Library/Caches/org.privacykey.privacytracker/`, relaunch.
 - **`spctl --assess` fails with `code object is not signed at all`.** The bundle was tampered with after signing, or the download was truncated. Re-download from GitHub releases.
 
@@ -5410,9 +5480,11 @@ Touch ID is also deliberately *not* used to derive backup-encryption keys — bu
 | What | File |
 |---|---|
 | Tauri config (window, updater public key, bundle metadata) | `src-tauri/tauri.conf.json` |
-| Rust entry + sidecar lifecycle | `src-tauri/src/main.rs`, `src-tauri/src/sidecar.rs` |
+| Rust entry + backend lifecycle | `src-tauri/src/main.rs` and `src-tauri/src/backend.rs`, with `embedded.rs` for the Rust backend and `sidecar.rs` for the Node sidecar |
+| The Rust backend's server | `core/` |
 | Touch ID command | `src-tauri/src/touch_id.rs` |
-| Standalone build pipeline | `scripts/stage-standalone.mjs`, `next.config.js` (look for `BUILD_STANDALONE`) |
+| What the Rust backend's bundle carries | `scripts/stage-site.mjs` (the frontend), `scripts/stage-notices.mjs` (the notices), `scripts/generate-rust-notices.mjs` (the crate list, and the summary the Legal page shows) |
+| Standalone build pipeline (sidecar releases) | `scripts/stage-standalone.mjs`, `next.config.js` (look for `BUILD_STANDALONE`) |
 | macOS release workflow | `.github/workflows/macos-release.yml` |
 | Cask formula (Homebrew tap) | `Casks/privacytracker.rb` in the separate [privacykey/homebrew-tap](https://github.com/privacykey/homebrew-tap) repo — regenerated on every release by `macos-release.yml`, so manual edits are overwritten |
 

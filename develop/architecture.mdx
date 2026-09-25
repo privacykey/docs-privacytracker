@@ -22,7 +22,7 @@ flowchart LR
     brew --> brewup[brew upgrade --cask]
 ```
 
-The same Next.js standalone bundle drives all three. Tauri runs it as a sidecar Node process; Docker runs it directly; Homebrew installs the same `.app` bundle as the desktop release.
+The same Next.js build drives all three. The Docker image serves it with the Rust server, `pt-core serve`; earlier images, v0.1.2's included, run Next.js's standalone bundle under Node instead. Homebrew installs the same `.app` bundle as the desktop release. The desktop app runs the standalone bundle as a sidecar Node process on releases before the Rust backend, and from the first release on it serves the same built frontend from the same Rust server, compiled into the app: see [Tauri & the backend](/develop/tauri).
 
 ## Shape of the codebase
 

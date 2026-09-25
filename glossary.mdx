@@ -103,7 +103,7 @@ A short reference for terms that show up across the app, the API, and the codeba
 
 **Tauri.** The Rust framework that wraps the Next.js bundle as a signed, notarized desktop app on macOS. Uses Tauri's updater with ed25519 signature verification.
 
-**Sidecar.** The bundled Node runtime that ships inside the Tauri app — the same Next.js standalone bundle that runs in Docker, just launched as a child process by the Rust shell.
+**Sidecar.** The Node process that runs the server inside the desktop app on releases before the Rust backend: the same Next.js standalone bundle that Docker images before the Rust server run, launched as a child process by the Rust shell. From the first release on the Rust backend the server is compiled into the app, and no Node ships with it. See [Tauri & the backend](/develop/tauri).
 
 **Standalone build.** The output of `npm run build:standalone` (with `BUILD_STANDALONE=1` set). Self-contained Next.js bundle suitable for the sidecar or any external runtime.
 

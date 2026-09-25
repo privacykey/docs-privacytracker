@@ -46,7 +46,7 @@ Site notice: These docs were drafted with AI assistance and may contain inaccura
 
 - [Architecture](https://docs.privacytracker.privacykey.org/develop/architecture.md): Codebase shape, data flow, three crash-safe runners, and the database model.
 - [Feature flags](https://docs.privacytracker.privacykey.org/develop/feature-flags.md): The focus model — audience × goals × accessibility — and how it drives every user-facing surface.
-- [Tauri & sidecar](https://docs.privacytracker.privacykey.org/develop/tauri.md): How the desktop app wraps the Next.js bundle, the sidecar Node runtime, and the ed25519-verified update flow.
+- [Tauri & the backend](https://docs.privacytracker.privacykey.org/develop/tauri.md): How the desktop app wraps the Next.js frontend, the Rust backend that serves it from inside the app, the Node sidecar that backend replaces, and the ed25519-verified update flow.
 - [Translations](https://docs.privacytracker.privacykey.org/develop/translations.md): Crowdin + next-intl workflow — how strings flow from en.json to every other locale.
 
 ## Develop / Docs site itself

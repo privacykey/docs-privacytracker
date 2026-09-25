@@ -142,7 +142,7 @@ The same versioned bundle works as the migration vehicle, with one caveat: the d
       --data-binary @privacytracker-export.json
     ```
 
-    The desktop sidecar serves on `127.0.0.1`; check **Settings → Admin → Deployment Diagnostics** for the port if 3000 is taken.
+    The desktop app serves on `127.0.0.1` at a port of its own, not 3000. The **Host** row under **Settings → Admin → Deployment Diagnostics** shows it; use it in both the URL and the `Origin` header. From the first release on the Rust backend the app keeps that port from one launch to the next, where earlier releases pick a new one at every launch.
   </Step>
 </Steps>
 

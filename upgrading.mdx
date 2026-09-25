@@ -156,6 +156,10 @@ If you need to roll back:
 
 Any data you wrote between the upgrade and the rollback is lost.
 
+<Note>
+  Rolling back across the release that moves the desktop app from its Node sidecar to a Rust backend works the same way. Both builds keep the database in the same data folder and the same format, and either opens what the other left behind, so the switch itself never stands in the way of going back to a release on Node. [Tauri & the backend](/develop/tauri) covers the move.
+</Note>
+
 ## Per-release notes
 
 The [Changelog](/changelog) mirrors `CHANGELOG.md` from the main repo. As releases land, this page should grow a per-version section here too — covering anything that *isn't* automatic and what to manually verify after upgrading.
