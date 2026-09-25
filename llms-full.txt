@@ -2113,7 +2113,11 @@ Pick the most restrictive box you can live with — every step below is calibrat
 
 **Tier 1: localhost only**
 
-Default for the desktop app. No external network exposure; only processes on your machine can reach `http://localhost:3000`. CSRF is enforced; admin token isn't strictly necessary.
+Default for the desktop app. No external network exposure; only processes on your machine can reach it. CSRF is enforced.
+
+The desktop app binds `127.0.0.1` on a port of its own, never 3000, and takes no admin token. See [Set the admin token](#set-the-admin-token).
+
+`http://localhost:3000` is the default for a server you run yourself, from Docker or a source checkout. That server counts as loopback-only when you tell it so with `PRIVACYTRACKER_BIND_HOST=127.0.0.1`; left unset, its bind reads as unknown and the admin token becomes mandatory. See [Configuration](https://docs.privacytracker.privacykey.org/configuration#environment-variables).
 
 **Hardening checklist:** none beyond the defaults. You're done.
 
@@ -2206,7 +2210,7 @@ Generate a token with at least 32 bytes of entropy and inject it into the runtim
 
 ```bash
 openssl rand -hex 32
-# 7c8d2a3f… (paste into your .env / docker-compose / launchd plist)
+# 7c8d2a3f… (paste into your .env, compose file or service manager)
 ```
 
 For Docker:
@@ -2216,7 +2220,11 @@ echo "AUDITOR_ADMIN_TOKEN=$(openssl rand -hex 32)" >> .env
 docker compose up -d --force-recreate
 ```
 
-For the desktop app, set it in the launchd plist or your shell profile so `privacytracker.app` inherits it. Confirm it's taking effect:
+> **Note**
+>
+> The desktop app takes no admin token, and there is no way to give it one. It starts its backend with a fixed environment that does not include `AUDITOR_ADMIN_TOKEN`, so setting the variable in a launchd plist, your shell profile or the app's own environment has no effect. The desktop app binds `127.0.0.1` only, which keeps it out of the network-exposed posture that makes the token mandatory. See [Tauri desktop shell](https://docs.privacytracker.privacykey.org/develop/tauri) for the variables the shell does hand the server.
+
+Confirm it's taking effect:
 
 ```bash
 # Should fail with 401 {"error":"Admin token required"}
@@ -5503,9 +5511,13 @@ Touch ID is also deliberately *not* used to derive backup-encryption keys — bu
 
 - **The app quits as soon as it opens (Rust backend).** The backend couldn't start, so no window appears. Launch the binary from Terminal (`/Applications/privacytracker.app/Contents/MacOS/privacytracker`): the line starting `[privacytracker] FATAL: failed to start the backend` gives the reason. If it says it could not find a built frontend, the bundle is incomplete; reinstall it from the latest DMG.
 - **Sidecar fails to start with `NODE_MODULE_VERSION X does not match Y`.** better-sqlite3's native module was built against a different Node ABI. Either rebuild it (`npm rebuild better-sqlite3`) against the bundled Node version, or update the bundled Node to match. The [Tauri Bundled Node guide on the Plane board](https://sites.plane.so/issues/39b6604351894f09a5e903acce37d265) has the recipe.
-- **App opens but the WebView is blank (sidecar releases).** The sidecar didn't answer `/api/apps` within the 60-second readiness deadline. Relaunch from Terminal (`/Applications/privacytracker.app/Contents/MacOS/privacytracker`) to see the sidecar's stdout, and check `~/Library/Logs/org.privacykey.privacytracker/` for the Rust shell's log. Usually it's a database lock from a previous bad shutdown (delete `privacy.db-wal` and `privacy.db-shm` while the app is closed) or a port conflict (rare on macOS, more common on Linux).
+- **App opens but the WebView is blank (sidecar releases).** The sidecar didn't answer `/api/apps` within the 60-second readiness deadline. Relaunch from Terminal (`/Applications/privacytracker.app/Contents/MacOS/privacytracker`) to see the sidecar's stdout, and check `~/Library/Logs/org.privacykey.privacytracker/` for the Rust shell's log. Usually it's a port conflict (rare on macOS, more common on Linux) or a database lock another copy of the app is still holding. Quit every copy, look for a stray sidecar with `pgrep -fl node` and stop it, then copy `~/Library/Application Support/privacytracker/` somewhere safe before you try anything else.
 - **Auto-update gets stuck.** Tauri caches the *checked* state for 24h regardless of outcome. To force a re-check: quit the app, delete `~/Library/Caches/org.privacykey.privacytracker/`, relaunch.
 - **`spctl --assess` fails with `code object is not signed at all`.** The bundle was tampered with after signing, or the download was truncated. Re-download from GitHub releases.
+
+> **Warning**
+>
+> Don't delete `privacy.db-wal` or `privacy.db-shm` to clear a lock. SQLite replays the WAL the next time it opens the database, so deleting one left behind by an unclean shutdown discards every transaction that was committed to it but not yet checkpointed. A lock held by a process that has died is released by the OS on its own.
 
 ## Where the code lives
 
