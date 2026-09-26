@@ -24,9 +24,9 @@ This page mirrors [`CHANGELOG.md`](https://github.com/privacykey/privacytracker/
   its request headers too slowly is still cut off after 60 seconds. One
   answer differs: an oversized upload from a client that is not signed in
   gets 401 instead of 413, because this server checks the token before it
-  reads a body. To go back to the Node server
-  until 1.0, set `PRIVACYTRACKER_BACKEND=node` in `.env` and rebuild; both
-  open the same volume. The image ships its notices under
+  reads a body. The Node server stays buildable
+  through this release: to go back to it, set `PRIVACYTRACKER_BACKEND=node`
+  in `.env` and rebuild; both open the same volume. The image ships its notices under
   `/app/third-party/`, and the binary is built so vulnerability scanners
   can see its Rust dependencies.
 
@@ -46,8 +46,8 @@ This page mirrors [`CHANGELOG.md`](https://github.com/privacykey/privacytracker/
   rollback possible. For contributors, `just tauri-dev` and
   `just tauri-build` (and `pnpm tauri:dev` / `pnpm tauri:build`) now build
   this backend and need no Node sidecar; the Node build is
-  `just tauri-dev-node` / `just tauri-build-node`, kept as the rollback until
-  1.0, and the release workflow's `backend` input defaults to `rust`. A
+  `just tauri-dev-node` / `just tauri-build-node`, kept as the rollback
+  through this release, and the release workflow's `backend` input defaults to `rust`. A
   development build run from `target/` now serves the frontend `pnpm build`
   just wrote, not a copy an earlier bundle build left there. No version
   bump comes with this change.
@@ -84,22 +84,85 @@ This page mirrors [`CHANGELOG.md`](https://github.com/privacykey/privacytracker/
 
 ### Fixed
 
+- The Diagnostics error log on the Node server now lists the warnings and
+  errors the server logs. In a production build it was always empty,
+  whatever the server had logged, because the server wrote to one copy of
+  the log and the page read another. The Rust server, which the desktop app
+  and the Docker image run by default, always showed them. The Node server
+  stays available as the rollback build through this release.
+- A bulk sync started in the first seconds after the server starts is no
+  longer "resumed" by that same server. Each start, the server looks for an
+  App Store sync, policy sync or Wayback import that a previous run left
+  unfinished and picks it up. A run started in that window looked the same,
+  whether from Settings' "Sync now" or from the policy refresh that syncing
+  a single app schedules, so it was picked up too: a second pass worked
+  through the same apps, every app still waiting was fetched twice, the
+  History tab showed each policy check twice, and the bell said the sync
+  had "resumed after server restart" when nothing had restarted. A run the
+  server started itself is now left to finish on its own, and a run left
+  behind by a crash is still resumed as before. Both the Node and the Rust
+  server had this.
+
 - The stale-apps section now offers one action to sync every stale app in
   the selected device scope. It reads the full paginated app list, so the
   action is not limited to the six apps previewed on the dashboard.
+
+- A bulk sync that resumes after a crash or a forced quit no longer counts
+  the app it was working on at the time twice. On a 20-app library the
+  Activity row read "20/21 synced", the Wayback import's summary said
+  "across 21 apps", and the privacy-policy sync kept the same extra attempt
+  in its totals. Each app is now counted once. Both the Node and the Rust
+  server had this.
 
 - Guardian focus now appears as "Looking after a child" in read-only focus
   summaries. Selecting a child no longer marks the "Help a friend" tile as
   selected, and choosing that tile explicitly switches to another adult.
 
+- Onboarding's match step now says what its counts mean. The first chip
+  read "4 imported" before anything had been imported; it now reads "4 in
+  your list". The second read "0 matched" beside visible matches because
+  it counted only the rows ticked for import; it now reads "0 selected"
+  and always agrees with the Import button. The "Matched by name" section
+  explains that a name with more than one possible app starts unticked.
+  On the AI step, the Disabled card no longer shows the Own Model hint
+  about Ollama endpoints, and the Anthropic and Own Model hints no longer
+  repeat their descriptions. Diagnostics shows the process's virtual size
+  in GB as "virtual address space", so the hundreds of GB macOS reserves
+  for any process no longer read like memory in use.
+
 - Completing a dashboard bulk sync now re-reads triage, review counts, and
   related dashboard data so the page reflects the just-finished sync without
   requiring a manual reload.
+
+- Marking several apps at once from the apps grid now shows the marks on
+  their cards straight away. The bulk bar saved the verdicts, but the cards
+  kept their old state until the page was reloaded, and Undo left the
+  undone marks in place; both now update the grid as they happen.
+
+- Seventeen conditional styles never applied, because the class was glued
+  onto the one before it (`btn-secondaryis-disabled`). They now do: the
+  import history's status filters show which one is active, the activity
+  log's Live toggle greys out when paused and pulses when a row arrives,
+  the settings auto-save toast fades out instead of vanishing, the
+  dashboard layout editor highlights the active preset, the accessibility
+  key shows a full match on app detail and in Compare, the restore button
+  dims while a restore or a sync is running, and the focus matrix marks
+  drifted and authored cells, as do three developer-menu controls. A test
+  now fails on any className template that repeats the mistake.
 
 - Dashboard layout editing now waits for the saved layout to load. If the
   layout read fails, both the simple editor and edit-in-place dashboard show
   a retry state instead of letting a change overwrite the saved layout with
   the default preset.
+
+- Saving onboarding's unmatched names as manual apps now says what it did.
+  The button counted rows set to Skip ("Save 2 as manual apps" saved one),
+  saving every row made its confirmation vanish, and the saved rows then
+  showed under Skipped as if nothing had been done with them. The button
+  now counts what it saves, the section stays to confirm it, and saved
+  rows leave the list; the Safari web-apps panel keeps its confirmation
+  the same way. In the developer preview, whose banner promises nothing
+  gets saved, neither button writes manual apps any more.
 
 - The Notifications type switches now filter what their labels say. The
   bell mapped each change to one of the four `flag.notifications.types.*`
@@ -1056,6 +1119,9 @@ This page mirrors [`CHANGELOG.md`](https://github.com/privacykey/privacytracker/
 
 ## [0.2.0] — 2026-09-05
 
+Prepared on this date but never tagged or released. These changes ship
+with v0.3.0, the next release after v0.1.2.
+
 ### Added
 
 - Canned sample data now populates every app-detail surface: each demo app
@@ -1261,8 +1327,7 @@ Next.js app.
 - Background sync with a notifications bell, and crash-safe resume across the
   live, Wayback, and privacy-policy jobs.
 
-[Unreleased]: https://github.com/privacykey/privacytracker/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/privacykey/privacytracker/compare/v0.1.2...v0.2.0
+[Unreleased]: https://github.com/privacykey/privacytracker/compare/v0.1.2...HEAD
 [0.1.2]: https://github.com/privacykey/privacytracker/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/privacykey/privacytracker/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/privacykey/privacytracker/releases/tag/v0.1.0
