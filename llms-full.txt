@@ -5284,7 +5284,7 @@ CREATE TABLE IF NOT EXISTS feature_flag_overrides (
 
 Overrides are **explicit** — an absent row means "inherit the computed default from audience + goals". This is what lets dev options show derivation (*"on · because `goal.monitor`"*) and spot overrides (*"off (custom) · would be on because `goal.monitor`"*) without mutating any focus config.
 
-`'collapsed'` is a third legal value for flags that model "visible but not expanded by default" — accordions, privacy-type cards, the a11y panel, the risk-tier legend. Roughly 8–12 flags use it; the rest stay boolean.
+`'collapsed'` is a third legal value for flags that model "visible but not expanded by default". Seven flags are tri-state, and they are exactly the ones whose hard default is `'collapsed'`: the accessibility panel, the annotations sidebar, the risk-tier legend, the Advanced accordion in Developer Options, and three policy diagnostics (the run-log strip, its full trace, and the per-chunk notes). Clients render a tri-state flag unless it is `'off'`. Every other flag is two-state, and clients read anything but `'on'` as off.
 
 ## Resolution order
 
@@ -5298,11 +5298,42 @@ resolveFlag(key):
     value ← GOAL_RULES[goal][key]            ?? value
   if accessibility modifier on:
     value ← ACCESSIBILITY_RULES[key]         ?? value
-  value ← runtime checks (Tauri, dependencies) ?? value
+  value ← 'on' for two desktop-only flags inside the desktop app
+  if FLAG_DEPENDENCIES[key] is hidden:
+    value ← 'off'
   value ← user override                       ?? value   // final word
 ```
 
 User overrides are always the final word.
+
+### Dependencies
+
+`FLAG_DEPENDENCIES` maps a flag to the one it depends on, such as the
+policy tab's buttons to the policy panel, or the dashboard's age-rating
+callout to the guardian age-rating master. The parent is resolved through
+the whole chain first, its own override included, and when it is hidden
+the dependent resolves `'off'`. A user override on the dependent still
+wins, since overrides apply last.
+
+What counts as hidden follows how clients read the parent
+(`parentHidesDependents` in `lib/feature-flag-rules.ts`):
+
+| Parent | Hides its dependents at | Leaves them alone at |
+|---|---|---|
+| Tri-state (hard default `'collapsed'`) | `'off'` | `'on'`, `'collapsed'` |
+| Two-state (every other flag) | `'off'`, `'collapsed'` | `'on'` |
+
+A `'collapsed'` tri-state parent is on screen, so whatever sits inside it
+keeps its own value. Two dependencies have a tri-state parent: the
+accessibility preference highlights depend on the accessibility panel,
+and the run log's full trace depends on the run-log strip. So the
+Accessibility tab highlights the features a saved accessibility profile
+asks for under every focus, and the full trace shows, closed, under the
+strip.
+
+A two-state parent at `'collapsed'` still hides its dependents. Developer
+Options can set any flag to `'collapsed'`, and a two-state flag set that
+way is off on screen, so its dependents follow it.
 
 ## Adding a flag
 
