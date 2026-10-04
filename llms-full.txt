@@ -3044,6 +3044,10 @@ This page mirrors [`CHANGELOG.md`](https://github.com/privacykey/privacytracker/
 
 ### Focus and dashboard
 
+- Keep the dashboard's "since last visit" comparison steady through app review,
+  navigation and refreshes in the same browser tab, separately for each device
+  view. Due reminders now say "Ready to review" and link directly to the
+  decision picker or rescheduling controls.
 - Keep Monitor and Cleanup selected while using the simpler view. Comparison,
   shortlist and guided cleanup follow the chosen focus; individual overrides
   still take priority.
@@ -3074,6 +3078,10 @@ This page mirrors [`CHANGELOG.md`](https://github.com/privacykey/privacytracker/
   within 15 minutes stops working, every paired phone is listed with when
   it was last used, and removing one ends its access at once. "Delete
   everything" ends every pairing, and backups leave pairings out.
+  The name phones show for the instance is set where the code is made. It
+  starts as this Mac's name in the desktop app, or "privacytracker server"
+  elsewhere, and a name typed there goes into the code without a separate
+  save.
 - In the desktop app, "Allow phone connections" (off by default) lets a
   paired phone on the same Wi-Fi reach this Mac. It opens a second,
   encrypted listener on your local network that answers paired phones only
@@ -3242,6 +3250,11 @@ This page mirrors [`CHANGELOG.md`](https://github.com/privacykey/privacytracker/
   so `collapsed`, where the accessibility panel and the strip sit by
   default, counted as hidden. A `collapsed` parent no longer turns its
   dependents off; an `off` one still does.
+- The app detail header's accessibility chip no longer opens an empty page
+  when the Accessibility tab is turned off in Developer Options
+  (`flag.detail.a11y.panel` set to `off`). Clicking it switched to the
+  hidden tab and deselected every tab; the chip now hides with the tab.
+  The muted "no features" label stays, since it opens nothing.
 - Desktop app: "Start at login" works in the signed app. It asked macOS's
   System Events to add a login item, which the app has no permission to do,
   so macOS most likely refused it silently. It now adds a LaunchAgent
