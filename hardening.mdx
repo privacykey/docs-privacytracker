@@ -145,7 +145,7 @@ Error bodies here are human-readable prose, not stable machine codes — assert 
 
 The token is verified with `crypto.timingSafeEqual` so token comparison runs in constant time. Failed attempts append to `audit_log` with the requester IP — see [Review the audit log](#review-the-audit-log) below.
 
-Setting the token also turns on the browser-session path: the Settings panel exchanges it once via `POST /api/auth/admin-token/login` for an 8-hour HttpOnly `pt_admin_token` cookie, so household members don't paste a secret into every request and no script running in the page can read it. `POST /api/auth/admin-token/logout` clears the session. See [Security → Browser sessions use a cookie](/security#browser-sessions-use-a-cookie-not-the-header).
+Setting the token also turns on the browser-session path: the Settings panel exchanges it once via `POST /api/auth/admin-token/login` for an 8-hour HttpOnly `pt_admin_token` cookie, so household members don't paste a secret into every request and no script running in the page can read it. The cookie carries a value derived from the token for this server process, not the token itself, so a restart or a rotation signs every browser out. `POST /api/auth/admin-token/logout` clears the session. See [Security → Browser sessions use a cookie](/security#browser-sessions-use-a-cookie-not-the-header).
 
 Once the instance is network-exposed, the token also gates a handful of sensitive **reads** — `/api/backup/`, `/api/export`, `/api/deployment/`, `/api/diagnostics/`, `/api/ai/debug-log`, `/api/import/`, `/api/desktop/diagnostics`. Any integration you point at those needs the header or the cookie too.
 

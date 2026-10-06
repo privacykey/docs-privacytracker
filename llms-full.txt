@@ -496,6 +496,8 @@ python3 scripts/ios-app-import/export_ios_apps.py --mode device
 
 You can run the helper from the source repo even when the rest of privacytracker is installed as a desktop app or Docker container — its output is just a text file the web onboarding accepts.
 
+The `.csv` is written for spreadsheets as much as for the importer: every field is quoted, and a cell that starts with `=`, `+`, `-` or `@` (or their full-width forms) gets a leading tab, so an app name chosen by a developer is never run as a formula when you open the file in Excel or Numbers. The onboarding importer trims that tab away again.
+
 ## Behind a reverse proxy
 
 For trusted-LAN deployments the project ships working Compose stacks in the repo checkout — you don't need to write a proxy config from scratch:
@@ -514,7 +516,7 @@ Three rules apply here, and the samples only cover the first. privacytracker enf
 
 The second one is yours to add. privacytracker only honours `X-Forwarded-For` / `X-Forwarded-Host` when `PRIVACYTRACKER_TRUST_PROXY` is set, and neither `.env.example` carries it, nor do the sample `compose.yaml` files pass it into the app container. Until you add it to the `privacytracker` service's `environment:` block yourself — the root `docker-compose.yml` documents the variable inline — rate-limit keys and `audit_log.actor_ip` collapse to the literal `local`, meaning one shared rate-limit bucket per route and no usable client IP in the audit trail. See [Hardening → TLS via reverse proxy](https://docs.privacytracker.privacykey.org/hardening#tls-via-reverse-proxy) for the threat-model walkthrough.
 
-The third one is what actually breaks the deployment, and it is also yours to add. `proxy.ts` rejects every request whose `Host` isn't allowlisted — `GET` included, before any other gate — with 400 `{"error":"Host not allowed"}`, and the default allowlist is loopback only. Neither sample passes `PRIVACYTRACKER_ALLOWED_HOSTS` into the app container and neither `.env.example` mentions it; the stacks work out of the box only because `PRIVACYTRACKER_HOST` defaults to `privacytracker.localhost` and `*.localhost` is treated as loopback. The moment you follow the `.env.example` comment and set a LAN DNS name, mDNS name, or a real domain, every request 400s until you add that same name to `PRIVACYTRACKER_ALLOWED_HOSTS` in the `privacytracker` service's `environment:` block.
+The third one is what actually breaks a deployment when it is missing. `proxy.ts` rejects every request whose `Host` isn't allowlisted, `GET` included and before any other gate, with 400 `{"error":"Host not allowed"}`, and the built-in allowlist is loopback only: `localhost` itself, `127.x` and `::1`. A `.localhost` name is not loopback. `privacytracker.localhost` is an ordinary hostname to privacytracker and has to be listed like any other, which is why both sample stacks pass `PRIVACYTRACKER_HOST` through to `PRIVACYTRACKER_ALLOWED_HOSTS` in the `privacytracker` service's `environment:` block. Keep that line when you adapt them: the name you set in `.env`, a LAN DNS name, an mDNS name or a real domain, is allowed through it, and any other name you reach the app by needs adding there or every request 400s. Listing a non-loopback name also makes the instance network-exposed, which is why both `.env.example` files require `AUDITOR_ADMIN_TOKEN`.
 
 ## Verify the install
 
@@ -558,7 +560,7 @@ browser cannot load the app at all.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PRIVACYTRACKER_ALLOWED_HOSTS` | (unset) | Comma-separated `Host` values to accept, **appended** to the always-allowed loopback set (`localhost`, `127.x`, `::1`). Supports `*.suffix` wildcards. Listing a non-loopback entry also flips the instance to network-exposed, which makes `AUDITOR_ADMIN_TOKEN` mandatory. |
+| `PRIVACYTRACKER_ALLOWED_HOSTS` | (unset) | Comma-separated `Host` values to accept, **appended** to the always-allowed loopback set (`localhost`, `127.x`, `::1`). Supports `*.suffix` wildcards. A `.localhost` name such as `privacytracker.localhost` is not loopback and must be listed like any other hostname. Listing a non-loopback entry also flips the instance to network-exposed, which makes `AUDITOR_ADMIN_TOKEN` mandatory. |
 | `PRIVACYTRACKER_NETWORK_EXPOSED` | (unset) | Boolean (`1`/`true`/`yes`/`on`). Forces the network-exposed posture without naming a host — for a reverse proxy that rewrites `Host`. |
 | `PRIVACYTRACKER_TRUST_PROXY` | (unset) | Boolean. Honour `X-Forwarded-Host` / `X-Forwarded-For` for the host allowlist, rate-limit keys, and audit IPs. This is an operator assertion that a trusted proxy sits in front — leave it unset for a direct bind, where those headers are attacker-controlled. |
 | `PRIVACYTRACKER_BIND_HOST` | (unset) | Explicit bind interface. A specific non-loopback IP implies network-exposed. |
@@ -603,7 +605,7 @@ Anthropic Messages API. Same UI, different default model.
 
 **custom**
 
-Any OpenAI-compatible endpoint — Ollama, llama.cpp, LM Studio, vLLM. The legacy `ollama` provider value is normalised to `custom` automatically. For local models, `providerLikelyNeedsChunking` triggers the ~12k-character splitter in `lib/privacy-policy.ts` so long policies don't blow the context window.
+Any OpenAI-compatible endpoint — Ollama, llama.cpp, LM Studio, vLLM. The legacy `ollama` provider value is normalised to `custom` automatically. For local models, `providerLikelyNeedsChunking` triggers the ~12k-character splitter in `lib/privacy-policy.ts` so long policies don't blow the context window. Two bounds apply whatever the provider: a fetch keeps at most 300,000 characters of a policy's text, and one summary makes at most 120 chunk calls. A stored text that would split into more is refused before any call is made, and a run whose caller has gone away (the tab closed, the request aborted) stops before its next call instead of finishing in the background.
 
 ![AI provider settings](https://docs.privacytracker.privacykey.org/images/settings-ai.png)
 
@@ -1725,7 +1727,7 @@ What privacytracker does *not* protect against:
 
 ## What data leaves your device
 
-Four things, all opt-in or transparent:
+Five things, all opt-in or transparent:
 
 **App Store HTML — fetched from apps.apple.com**
 
@@ -1737,7 +1739,13 @@ Apple sees the request as coming from your IP address. They presumably log it li
 
 When AI summaries are enabled, privacytracker follows the *Developer's Privacy Policy* link from each app's App Store page and fetches the policy text. The fetcher follows redirects, respects standard `Cache-Control` headers, and does not auto-fill any form fields. The developer's host sees a request from your IP for the URL Apple already publishes on the App Store page.
 
-The text is hashed (SHA-256) and re-summarisation only happens when the hash changes — so cosmetic edits to a policy don't burn AI calls or re-leak anything.
+The text is hashed (SHA-256) and re-summarisation only happens when the hash changes — so cosmetic edits to a policy don't burn AI calls or re-leak anything. A fetch keeps at most 300,000 characters of the text, and each app keeps its newest 20 captured versions (no more than 8 MiB between them), so a page that changes on every visit cannot grow the database or its backup without bound.
+
+**Internet Archive — when you import history or fetch a policy**
+
+Two features talk to archive.org, and both send it a URL Apple or the developer already publishes, never anything about you beyond the IP the request comes from.
+
+The Wayback importer (Settings → Historical Import, or *Check the archive* on an app's Change History tab) lists the archived copies of the app's App Store page, fetches the ones it needs, and at most once per app asks Save Page Now to capture today's page, only when the Archive holds no copy from the last 45 days. After each successful policy fetch, privacytracker also looks up the newest archived copy of that policy so the AI Policy and Change History tabs can link to one, keeps whichever known copy is newest, and asks for a fresh capture only when no copy from the last 45 days is known, from that lookup or from an earlier save. If a developer's site refuses the policy twice, the text is read from the newest archived copy instead. None of this happens while policy scraping is disabled.
 
 **AI provider calls — only when configured**
 
@@ -1836,13 +1844,13 @@ The Settings panel can't put a long-lived secret in JavaScript, so it exchanges 
 
 | Endpoint | Does |
 |---|---|
-| `POST /api/auth/admin-token/login` | Takes `{ "token": "..." }`, constant-time compares, sets `pt_admin_token` — HttpOnly, `SameSite=strict`, `Secure` over HTTPS, 8-hour max-age. |
+| `POST /api/auth/admin-token/login` | Takes `{ "token": "..." }`, constant-time compares, sets `pt_admin_token` — HttpOnly, `SameSite=strict`, `Secure` over HTTPS, 8-hour max-age. Its value is not the token: it is an HMAC-SHA256 of the token under a 32-byte secret the server mints once per process. |
 | `POST /api/auth/admin-token/logout` | Clears the cookie server-side (JS can't, it's HttpOnly). |
 | `GET /api/auth/admin-token/status` | Returns `{ configured, unlocked }`. Never returns the token. |
 
-All three are exempt from the non-local admin gate (`ADMIN_AUTH_BYPASS_PREFIX` in `proxy.ts`) — the login endpoint is how you obtain the cookie in the first place, so gating it would be circular. Same-origin is the narrower claim: login and logout call `isSameOriginRequest()` themselves, but `GET .../status` doesn't, and the proxy's CSRF check only covers `POST`/`PUT`/`PATCH`/`DELETE` — so a cross-origin `GET` reaches that handler. What it gets back is two booleans; the token itself is never returned. `proxy.ts` treats the cookie and the `X-Auditor-Admin-Token` header as equivalent everywhere else.
+All three are exempt from the non-local admin gate (`ADMIN_AUTH_BYPASS_PREFIX` in `proxy.ts`) — the login endpoint is how you obtain the cookie in the first place, so gating it would be circular. Same-origin is the narrower claim: login and logout call `isSameOriginRequest()` themselves, but `GET .../status` doesn't, and the proxy's CSRF check only covers `POST`/`PUT`/`PATCH`/`DELETE` — so a cross-origin `GET` reaches that handler. What it gets back is two booleans; the token itself is never returned. Everywhere else `proxy.ts` accepts either credential, with one asymmetry: the header takes the raw token only, while the cookie takes the derived session value or the raw token. Every `pt_admin_token` cookie on the request is tried, so a cookie planted by a sibling port or a parent domain cannot shadow the real one. Because the secret lives in the server process, a restart or a token rotation signs every browser out.
 
-Keeping the token out of `sessionStorage` is the point: an injected script can't read an HttpOnly cookie, so an XSS bug can't exfiltrate the token and replay it later from somewhere else.
+Keeping the token out of `sessionStorage` is the point: an injected script can't read an HttpOnly cookie, so an XSS bug can't exfiltrate the token and replay it later from somewhere else, and a session value that does leak is worthless once the server restarts.
 
 ### Rate limiting
 
@@ -2241,7 +2249,7 @@ Error bodies here are human-readable prose, not stable machine codes — assert 
 
 The token is verified with `crypto.timingSafeEqual` so token comparison runs in constant time. Failed attempts append to `audit_log` with the requester IP — see [Review the audit log](#review-the-audit-log) below.
 
-Setting the token also turns on the browser-session path: the Settings panel exchanges it once via `POST /api/auth/admin-token/login` for an 8-hour HttpOnly `pt_admin_token` cookie, so household members don't paste a secret into every request and no script running in the page can read it. `POST /api/auth/admin-token/logout` clears the session. See [Security → Browser sessions use a cookie](https://docs.privacytracker.privacykey.org/security#browser-sessions-use-a-cookie-not-the-header).
+Setting the token also turns on the browser-session path: the Settings panel exchanges it once via `POST /api/auth/admin-token/login` for an 8-hour HttpOnly `pt_admin_token` cookie, so household members don't paste a secret into every request and no script running in the page can read it. The cookie carries a value derived from the token for this server process, not the token itself, so a restart or a rotation signs every browser out. `POST /api/auth/admin-token/logout` clears the session. See [Security → Browser sessions use a cookie](https://docs.privacytracker.privacykey.org/security#browser-sessions-use-a-cookie-not-the-header).
 
 Once the instance is network-exposed, the token also gates a handful of sensitive **reads** — `/api/backup/`, `/api/export`, `/api/deployment/`, `/api/diagnostics/`, `/api/ai/debug-log`, `/api/import/`, `/api/desktop/diagnostics`. Any integration you point at those needs the header or the cookie too.
 
@@ -2706,8 +2714,9 @@ If the process was force-killed, don't delete the `-wal` or `-shm` file it left 
 | `request timeout` | Provider didn't respond within the configured timeout | Increase **Settings → AI → Timeouts** (the small/local model preset is more generous); for Ollama, make sure the model is pre-pulled (`ollama pull llama3.2`) |
 | `chunked: 6 of 6, partial output` | A chunk failed mid-document | Re-run **Regenerate** on the app; chunking is idempotent |
 | `model not found` | Selected model isn't available on the provider | Re-run **Settings → AI → Fetch models** to refresh the dropdown |
+| `chunk-budget` | The stored text would split into more than 120 chunks, so no call was made | Rescrape the policy (**Force re-scrape** on the AI Policy tab); a fetch keeps at most 300,000 characters, and the run log records `fetch:truncated` when it cut the text |
 
-For local models, the `providerLikelyNeedsChunking` flag automatically splits documents over ~12 KB into chunks. If your model has a larger context window, you can disable this in `lib/ai-config.ts` (source builds only).
+For local models, the `providerLikelyNeedsChunking` flag automatically splits documents over ~12 KB into chunks. If your model has a larger context window, you can disable this in `lib/ai-config.ts` (source builds only). The 300,000-character and 120-chunk bounds above apply to every provider and are constants, not settings.
 
 ## Reverse-proxy CSRF rejection
 
@@ -2961,13 +2970,13 @@ A short reference for terms that show up across the app, the API, and the codeba
 
 ## AI and policy
 
-**Policy version.** A captured version of a developer's privacy policy (URL, fetched text, SHA-256 hash, AI summary if generated). Stored in `policy_versions`. Re-summarisation only runs when the hash changes.
+**Policy version.** A captured version of a developer's privacy policy (URL, fetched text, SHA-256 hash, AI summary if generated). Stored in `privacy_policy_versions`. Re-summarisation only runs when the hash changes. Each app keeps its newest 20 versions, and no more than 8 MiB of text between them; older versions are dropped when a new one is stored, so a page whose text changes on every fetch cannot grow the database or its backup without bound. A History entry whose version was dropped keeps its own text; only its link to the captured page answers not found.
 
 **Policy event.** What a privacy-policy fetch records on the app's History timeline: `first` (the first usable capture), `same` (unchanged text), `changed` (new text, diffable against the previous version), or `error` (a failed or unusable fetch). Every fetch records one, as `policy_event` in a `privacy_snapshots` row's change summary. Only `changed` can be flagged for review or raise a notification, and only while `flag.notifications.types.policy_updates` is on. See [Configuration → Notifications](https://docs.privacytracker.privacykey.org/configuration#notifications).
 
 **Lens.** One topic area an AI summary covers. Eight of them, in this order: `collection_scope`, `product_use`, `ads_marketing`, `third_party_sharing`, `tracking_analytics`, `user_controls`, `data_retention`, `children_minors`. Defined in `POLICY_LENSES` in `lib/policy-summary-meta.ts`; the per-lens prompt guidance lives in `POLICY_TOPIC_GUIDES` in `lib/privacy-policy.ts`. Summaries are rebuilt against that list, and keys outside it are discarded — so `summary_json` and the API only ever carry these eight.
 
-**Chunking.** Splitting a long policy into ~12 KB pieces for small/local models. Triggered by the `providerLikelyNeedsChunking` flag in `lib/ai-config.ts`. Per-lens prompts are generated against each chunk and merged.
+**Chunking.** Splitting a long policy into ~12 KB pieces for small/local models. Triggered by the `providerLikelyNeedsChunking` flag in `lib/ai-config.ts`. Per-lens prompts are generated against each chunk and merged. One summary makes at most 120 chunk calls, over text a fetch has already cut to 300,000 characters; a text that would need more is refused before the first call.
 
 **AI debug log.** Append-only diagnostic table showing every AI call's provider, model, prompt size, response status, and timing. Off unless *Record AI prompts and responses* is enabled. Inspectable from **Settings → Admin → Developer Options** or `GET /api/ai/debug-log`.
 
@@ -3027,7 +3036,7 @@ A short reference for terms that show up across the app, the API, and the codeba
 
 **Standalone build.** The output of `npm run build:standalone` (with `BUILD_STANDALONE=1` set). Self-contained Next.js bundle suitable for the sidecar or any external runtime.
 
-**Admin token.** Optional shared secret (`AUDITOR_ADMIN_TOKEN`) that gates destructive routes when set, plus a list of sensitive read prefixes once the instance is network-exposed. Sent as the `X-Auditor-Admin-Token` header or the `pt_admin_token` cookie. Verified with `crypto.timingSafeEqual`. Failed attempts log to `audit_log` as `admin_token.login.invalid`.
+**Admin token.** Optional shared secret (`AUDITOR_ADMIN_TOKEN`) that gates destructive routes when set, plus a list of sensitive read prefixes once the instance is network-exposed. Sent as the `X-Auditor-Admin-Token` header (the raw token) or the `pt_admin_token` cookie, whose value is an HMAC of the token under a secret the server mints once per process, so it stops working at a restart or a token rotation. Verified with `crypto.timingSafeEqual`. Failed attempts log to `audit_log` as `admin_token.login.invalid`.
 
 # Changelog
 Source: https://docs.privacytracker.privacykey.org/changelog
@@ -5763,13 +5772,19 @@ The last port is kept in `.desktop-port` in the data directory. If it's still fr
 
 `src-tauri/src/embedded.rs` starts the server on that listener, in the app's own process. It opens and migrates `privacy.db`, starts the scheduled jobs, and serves the frontend from `Contents/Resources/site`, read-only inside the signed bundle. Nothing is extracted into the data directory.
 
-The server doesn't read the app's environment. The shell hands it a fixed set of variables, such as the data directory, a loopback bind and `PRIVACYTRACKER_RUNTIME=desktop`, and never an admin token, much as the sidecar starts Node from a cleared environment. Nothing in the app's own environment changes who may call the API.
+The server doesn't read the app's environment. The shell hands it a fixed set of variables, such as the data directory, a loopback bind, `PRIVACYTRACKER_RUNTIME=desktop` and the launch credential described next, and never an admin token, much as the sidecar starts Node from a cleared environment. Nothing in the app's own environment changes who may call the API.
 
-**Step 4: The WebView loads the app**
+**Step 4: The server answers `/api` only to this launch**
 
-There's nothing to wait for: the listener is bound and the server is ready before the window loads `http://127.0.0.1:<port>/`.
+A loopback bind keeps the network out but not other processes on the Mac, so the shell mints 32 random bytes per launch and passes them to the server as `PRIVACYTRACKER_DESKTOP_TOKEN`. While that is set, every `/api/*` request, public reads and `/api/csp-report` included, is refused with 401 `Desktop credential required` unless it carries the credential in the `X-PrivacyTracker-Desktop-Token` header or the `pt_desktop_session` cookie. Page shells stay public. The credential is deliberately not an admin token: `/api/auth/admin-token/status` still answers `configured: false`, so the desktop never shows the login page or the unlock card.
 
-**Step 5: Quitting stops the server**
+Same-user tools such as the MCP companion read the credential from `.desktop-token` in the data directory (mode 0600, rewritten every launch and removed on a clean exit) and the port from `.desktop-port`, and send the header.
+
+**Step 5: The WebView loads the app through a one-time link**
+
+There's nothing to wait for: the listener is bound and the server is ready before the window loads. It does not load `http://127.0.0.1:<port>/` directly, because the page would have no credential. `backend::entry_url` issues a nonce and the window opens `/api/desktop/bootstrap?nonce=…`, which the server answers once, within 60 seconds, with the `pt_desktop_session` cookie (`HttpOnly; SameSite=Strict; Path=/api`) and a 303 to `/`. Reloads, deep links and same-origin navigations keep the cookie; anything that points a webview at the server afresh needs a new link.
+
+**Step 6: Quitting stops the server**
 
 `Cmd-Q`, tray Quit, menu-bar Quit and updater restart all route through `RunEvent::ExitRequested`. The server stops accepting connections and ends its scheduled jobs, and requests in flight get up to **3 seconds**, the grace the sidecar gets between SIGTERM and SIGKILL. A bulk run cut off there resumes on the next launch, as it does after a crash.
 
@@ -5787,9 +5802,11 @@ Releases before the Rust backend run the server as a separate Node process, the 
 
 The bundled Node binary (`src-tauri/binaries/node-<arch>`) runs the standalone Next.js bundle (`server.js`) with `PORT=<that-port>` and `HOSTNAME=127.0.0.1`. The bundle binds to localhost only — no external network exposure.
 
+The sidecar gets the same launch credential as the Rust backend: `sidecar.rs` mints it and passes it as `PRIVACYTRACKER_DESKTOP_TOKEN`, and `lib/desktop-auth.ts` in `proxy.ts` refuses every `/api` request without it. A separate process cannot share the shell's memory, so the nonce for the window's single bootstrap link travels in the environment too, as `PRIVACYTRACKER_DESKTOP_BOOTSTRAP_NONCE`, and the proxy redeems it once within 60 seconds of first looking at a link. The credential is written to `.desktop-token` and the port to `.desktop-port`, as on the Rust backend.
+
 **Step 3: Tauri waits for the sidecar to answer**
 
-`sidecar::wait_until_ready` polls `http://127.0.0.1:<port>/api/apps` every 250 ms with a 2-second per-request timeout, and treats any response with status < 500 as ready — it never parses the body. The overall deadline is `READY_TIMEOUT`, **60 seconds** (the in-source comment records the bump from 30s: standalone-tree extraction takes 5–10s on a slow disk, and Next.js compiles the route on first hit). Once a probe succeeds, the WebView loads `http://127.0.0.1:<port>/` and the user sees the dashboard.
+`sidecar::wait_until_ready` polls `http://127.0.0.1:<port>/api/apps` every 250 ms with a 2-second per-request timeout, and treats any response with status < 500 as ready — it never parses the body. The overall deadline is `READY_TIMEOUT`, **60 seconds** (the in-source comment records the bump from 30s: standalone-tree extraction takes 5–10s on a slow disk, and Next.js compiles the route on first hit). The probe goes through `backend::get`, which attaches the credential, so the gate above does not read as a failed boot. Once a probe succeeds, the WebView opens the one-time `/api/desktop/bootstrap` link, lands on `/` with the session cookie set, and the user sees the dashboard.
 
 `/api/ready` exists, but nothing in the Tauri shell uses it — it's the Docker/compose healthcheck and the smoke-test probe. It answers `{ status: "ready" | "not_ready", checks }`, not `{ ok: true }`.
 
@@ -5889,7 +5906,8 @@ The updater has no opt-out switch — the plugin is registered unconditionally i
 ├── privacy.db-shm                     shared-memory file
 ├── backup-signing.key                 per-install HMAC key for backup bundles (0600)
 ├── backups/                           server-local rolling snapshots (Settings → Backup)
-└── .desktop-port                      the port to try first at the next launch
+├── .desktop-port                      the port to try first at the next launch
+└── .desktop-token                     this launch's credential for /api (0600; removed on a clean exit)
 ```
 
 This is the directory the sidecar releases use, and the Rust backend keeps the database in the same format. Either build opens what the other left behind, WAL included, which is what makes a rollback from the Rust backend to a Node build safe.
@@ -5932,7 +5950,7 @@ Three call sites today:
 2. **Enabling "Require unlock"** in Desktop settings — confirms the user before persisting `require_unlock`. Note the gate on window reveal isn't implemented yet: `reveal_main_window` always reveals immediately and defers the lock overlay to the webview, which doesn't draw one.
 3. **The "Test Touch ID" button** in Desktop settings.
 
-`POST /api/reset` involves neither. `SettingsView.resetAllData()` is a bare `fetch("/api/reset", { method: "POST" })` with no headers — the route is protected by the same-origin proxy check, a 30-per-10-minutes rate limit, and the admin token when one is required, returning 401 otherwise. The admin token reaches the server as the `pt_admin_token` cookie the user establishes through `/api/auth/admin-token/login`; the Rust side never reads it from the environment and never injects it.
+`POST /api/reset` involves neither. `SettingsView.resetAllData()` is a bare `fetch("/api/reset", { method: "POST" })` with no headers — the route is protected by the same-origin proxy check, a 30-per-10-minutes rate limit, and the admin token when one is required, returning 401 otherwise. The admin token reaches the server as the `pt_admin_token` cookie the user establishes through `/api/auth/admin-token/login`; the Rust side never reads it from the environment and never injects it. On the desktop the browser also sends the `pt_desktop_session` cookie with that bare `fetch`, and without it the server refuses the request with 401 before any of those checks run (see [The Rust backend](#the-rust-backend)).
 
 Touch ID is also deliberately *not* used to derive backup-encryption keys — bundles have to stay portable to the web build and to other machines.
 
@@ -6487,7 +6505,7 @@ Without it they return 401 `{ "error": "Admin token required for non-local API a
 
 Two of those reads don't wait for exposure. `GET /api/backup/export` and `GET /api/ai/debug-log` check `adminTokenConfigured() || isNetworkExposed()` in the handler itself, so they return 401 `{ "error": "Admin token required" }` as soon as `AUDITOR_ADMIN_TOKEN` is set — on a loopback-only install too.
 
-**Cookie sessions.** `POST /api/auth/admin-token/login` with `{ "token": "..." }` exchanges the token for an 8-hour HttpOnly `pt_admin_token` cookie, which every gated route accepts in place of the header. `POST /api/auth/admin-token/logout` clears it; `GET /api/auth/admin-token/status` returns `{ configured, unlocked }`. Login and logout enforce same-origin themselves and login is capped at 5 attempts per minute; `status` is a read, so neither its handler nor the CSRF layer origin-checks it — it still has to clear the host allowlist, and it never returns the token. Prefer the header for scripted callers; the cookie exists so the browser UI never holds the raw secret in JavaScript.
+**Cookie sessions.** `POST /api/auth/admin-token/login` with `{ "token": "..." }` exchanges the token for an 8-hour HttpOnly `pt_admin_token` cookie, which every gated route accepts in place of the header. The cookie's value is an HMAC of the token under a secret minted once per server process, not the token itself, so it stops working at the next restart or token rotation; the header takes the raw token only. `POST /api/auth/admin-token/logout` clears it; `GET /api/auth/admin-token/status` returns `{ configured, unlocked }`. Login and logout enforce same-origin themselves and login is capped at 5 attempts per minute; `status` is a read, so neither its handler nor the CSRF layer origin-checks it — it still has to clear the host allowlist, and it never returns the token. Prefer the header for scripted callers; the cookie exists so the browser UI never holds the raw secret in JavaScript.
 
 The token is a single shared secret — there's no built-in user/account system in privacytracker. The intent is to gate destructive routes when the app is exposed beyond a single-user trusted boundary (e.g., self-hosted on a LAN).
 

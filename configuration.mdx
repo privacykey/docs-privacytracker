@@ -21,7 +21,7 @@ browser cannot load the app at all.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PRIVACYTRACKER_ALLOWED_HOSTS` | (unset) | Comma-separated `Host` values to accept, **appended** to the always-allowed loopback set (`localhost`, `127.x`, `::1`). Supports `*.suffix` wildcards. Listing a non-loopback entry also flips the instance to network-exposed, which makes `AUDITOR_ADMIN_TOKEN` mandatory. |
+| `PRIVACYTRACKER_ALLOWED_HOSTS` | (unset) | Comma-separated `Host` values to accept, **appended** to the always-allowed loopback set (`localhost`, `127.x`, `::1`). Supports `*.suffix` wildcards. A `.localhost` name such as `privacytracker.localhost` is not loopback and must be listed like any other hostname. Listing a non-loopback entry also flips the instance to network-exposed, which makes `AUDITOR_ADMIN_TOKEN` mandatory. |
 | `PRIVACYTRACKER_NETWORK_EXPOSED` | (unset) | Boolean (`1`/`true`/`yes`/`on`). Forces the network-exposed posture without naming a host — for a reverse proxy that rewrites `Host`. |
 | `PRIVACYTRACKER_TRUST_PROXY` | (unset) | Boolean. Honour `X-Forwarded-Host` / `X-Forwarded-For` for the host allowlist, rate-limit keys, and audit IPs. This is an operator assertion that a trusted proxy sits in front — leave it unset for a direct bind, where those headers are attacker-controlled. |
 | `PRIVACYTRACKER_BIND_HOST` | (unset) | Explicit bind interface. A specific non-loopback IP implies network-exposed. |
@@ -63,7 +63,7 @@ Everything else (AI provider, sync schedule, Wayback toggles, notification prefs
     Anthropic Messages API. Same UI, different default model.
   </Accordion>
   <Accordion title="custom" icon="server">
-    Any OpenAI-compatible endpoint — Ollama, llama.cpp, LM Studio, vLLM. The legacy `ollama` provider value is normalised to `custom` automatically. For local models, `providerLikelyNeedsChunking` triggers the ~12k-character splitter in `lib/privacy-policy.ts` so long policies don't blow the context window.
+    Any OpenAI-compatible endpoint — Ollama, llama.cpp, LM Studio, vLLM. The legacy `ollama` provider value is normalised to `custom` automatically. For local models, `providerLikelyNeedsChunking` triggers the ~12k-character splitter in `lib/privacy-policy.ts` so long policies don't blow the context window. Two bounds apply whatever the provider: a fetch keeps at most 300,000 characters of a policy's text, and one summary makes at most 120 chunk calls. A stored text that would split into more is refused before any call is made, and a run whose caller has gone away (the tab closed, the request aborted) stops before its next call instead of finishing in the background.
   </Accordion>
 </AccordionGroup>
 

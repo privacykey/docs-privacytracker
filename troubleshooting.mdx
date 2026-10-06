@@ -103,8 +103,9 @@ If the process was force-killed, don't delete the `-wal` or `-shm` file it left 
 | `request timeout` | Provider didn't respond within the configured timeout | Increase **Settings → AI → Timeouts** (the small/local model preset is more generous); for Ollama, make sure the model is pre-pulled (`ollama pull llama3.2`) |
 | `chunked: 6 of 6, partial output` | A chunk failed mid-document | Re-run **Regenerate** on the app; chunking is idempotent |
 | `model not found` | Selected model isn't available on the provider | Re-run **Settings → AI → Fetch models** to refresh the dropdown |
+| `chunk-budget` | The stored text would split into more than 120 chunks, so no call was made | Rescrape the policy (**Force re-scrape** on the AI Policy tab); a fetch keeps at most 300,000 characters, and the run log records `fetch:truncated` when it cut the text |
 
-For local models, the `providerLikelyNeedsChunking` flag automatically splits documents over ~12 KB into chunks. If your model has a larger context window, you can disable this in `lib/ai-config.ts` (source builds only).
+For local models, the `providerLikelyNeedsChunking` flag automatically splits documents over ~12 KB into chunks. If your model has a larger context window, you can disable this in `lib/ai-config.ts` (source builds only). The 300,000-character and 120-chunk bounds above apply to every provider and are constants, not settings.
 
 ## Reverse-proxy CSRF rejection
 
