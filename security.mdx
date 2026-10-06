@@ -32,7 +32,7 @@ What privacytracker does *not* protect against:
 
 ## What data leaves your device
 
-Four things, all opt-in or transparent:
+Five things, all opt-in or transparent:
 
 <AccordionGroup>
   <Accordion title="App Store HTML — fetched from apps.apple.com" icon="apple">
@@ -43,7 +43,12 @@ Four things, all opt-in or transparent:
   <Accordion title="Privacy-policy text — fetched from the developer's domain" icon="file-shield">
     When AI summaries are enabled, privacytracker follows the *Developer's Privacy Policy* link from each app's App Store page and fetches the policy text. The fetcher follows redirects, respects standard `Cache-Control` headers, and does not auto-fill any form fields. The developer's host sees a request from your IP for the URL Apple already publishes on the App Store page.
 
-    The text is hashed (SHA-256) and re-summarisation only happens when the hash changes — so cosmetic edits to a policy don't burn AI calls or re-leak anything.
+    The text is hashed (SHA-256) and re-summarisation only happens when the hash changes — so cosmetic edits to a policy don't burn AI calls or re-leak anything. A fetch keeps at most 300,000 characters of the text, and each app keeps its newest 20 captured versions (no more than 8 MiB between them), so a page that changes on every visit cannot grow the database or its backup without bound.
+  </Accordion>
+  <Accordion title="Internet Archive — when you import history or fetch a policy" icon="box-archive">
+    Two features talk to archive.org, and both send it a URL Apple or the developer already publishes, never anything about you beyond the IP the request comes from.
+
+    The Wayback importer (Settings → Historical Import, or *Check the archive* on an app's Change History tab) lists the archived copies of the app's App Store page, fetches the ones it needs, and at most once per app asks Save Page Now to capture today's page, only when the Archive holds no copy from the last 45 days. After each successful policy fetch, privacytracker also looks up the newest archived copy of that policy so the AI Policy and Change History tabs can link to one, keeps whichever known copy is newest, and asks for a fresh capture only when no copy from the last 45 days is known, from that lookup or from an earlier save. If a developer's site refuses the policy twice, the text is read from the newest archived copy instead. None of this happens while policy scraping is disabled.
   </Accordion>
   <Accordion title="AI provider calls — only when configured" icon="sparkles">
     If you've configured an AI provider (OpenAI, Anthropic, or your own local OpenAI-compatible endpoint), privacytracker sends the policy text to that provider as part of summarisation prompts. The provider receives:
@@ -142,13 +147,13 @@ The Settings panel can't put a long-lived secret in JavaScript, so it exchanges 
 
 | Endpoint | Does |
 |---|---|
-| `POST /api/auth/admin-token/login` | Takes `{ "token": "..." }`, constant-time compares, sets `pt_admin_token` — HttpOnly, `SameSite=strict`, `Secure` over HTTPS, 8-hour max-age. |
+| `POST /api/auth/admin-token/login` | Takes `{ "token": "..." }`, constant-time compares, sets `pt_admin_token` — HttpOnly, `SameSite=strict`, `Secure` over HTTPS, 8-hour max-age. Its value is not the token: it is an HMAC-SHA256 of the token under a 32-byte secret the server mints once per process. |
 | `POST /api/auth/admin-token/logout` | Clears the cookie server-side (JS can't, it's HttpOnly). |
 | `GET /api/auth/admin-token/status` | Returns `{ configured, unlocked }`. Never returns the token. |
 
-All three are exempt from the non-local admin gate (`ADMIN_AUTH_BYPASS_PREFIX` in `proxy.ts`) — the login endpoint is how you obtain the cookie in the first place, so gating it would be circular. Same-origin is the narrower claim: login and logout call `isSameOriginRequest()` themselves, but `GET .../status` doesn't, and the proxy's CSRF check only covers `POST`/`PUT`/`PATCH`/`DELETE` — so a cross-origin `GET` reaches that handler. What it gets back is two booleans; the token itself is never returned. `proxy.ts` treats the cookie and the `X-Auditor-Admin-Token` header as equivalent everywhere else.
+All three are exempt from the non-local admin gate (`ADMIN_AUTH_BYPASS_PREFIX` in `proxy.ts`) — the login endpoint is how you obtain the cookie in the first place, so gating it would be circular. Same-origin is the narrower claim: login and logout call `isSameOriginRequest()` themselves, but `GET .../status` doesn't, and the proxy's CSRF check only covers `POST`/`PUT`/`PATCH`/`DELETE` — so a cross-origin `GET` reaches that handler. What it gets back is two booleans; the token itself is never returned. Everywhere else `proxy.ts` accepts either credential, with one asymmetry: the header takes the raw token only, while the cookie takes the derived session value or the raw token. Every `pt_admin_token` cookie on the request is tried, so a cookie planted by a sibling port or a parent domain cannot shadow the real one. Because the secret lives in the server process, a restart or a token rotation signs every browser out.
 
-Keeping the token out of `sessionStorage` is the point: an injected script can't read an HttpOnly cookie, so an XSS bug can't exfiltrate the token and replay it later from somewhere else.
+Keeping the token out of `sessionStorage` is the point: an injected script can't read an HttpOnly cookie, so an XSS bug can't exfiltrate the token and replay it later from somewhere else, and a session value that does leak is worthless once the server restarts.
 
 ### Rate limiting
 

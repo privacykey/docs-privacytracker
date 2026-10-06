@@ -41,13 +41,13 @@ A short reference for terms that show up across the app, the API, and the codeba
 
 ## AI and policy
 
-**Policy version.** A captured version of a developer's privacy policy (URL, fetched text, SHA-256 hash, AI summary if generated). Stored in `policy_versions`. Re-summarisation only runs when the hash changes.
+**Policy version.** A captured version of a developer's privacy policy (URL, fetched text, SHA-256 hash, AI summary if generated). Stored in `privacy_policy_versions`. Re-summarisation only runs when the hash changes. Each app keeps its newest 20 versions, and no more than 8 MiB of text between them; older versions are dropped when a new one is stored, so a page whose text changes on every fetch cannot grow the database or its backup without bound. A History entry whose version was dropped keeps its own text; only its link to the captured page answers not found.
 
 **Policy event.** What a privacy-policy fetch records on the app's History timeline: `first` (the first usable capture), `same` (unchanged text), `changed` (new text, diffable against the previous version), or `error` (a failed or unusable fetch). Every fetch records one, as `policy_event` in a `privacy_snapshots` row's change summary. Only `changed` can be flagged for review or raise a notification, and only while `flag.notifications.types.policy_updates` is on. See [Configuration → Notifications](/configuration#notifications).
 
 **Lens.** One topic area an AI summary covers. Eight of them, in this order: `collection_scope`, `product_use`, `ads_marketing`, `third_party_sharing`, `tracking_analytics`, `user_controls`, `data_retention`, `children_minors`. Defined in `POLICY_LENSES` in `lib/policy-summary-meta.ts`; the per-lens prompt guidance lives in `POLICY_TOPIC_GUIDES` in `lib/privacy-policy.ts`. Summaries are rebuilt against that list, and keys outside it are discarded — so `summary_json` and the API only ever carry these eight.
 
-**Chunking.** Splitting a long policy into ~12 KB pieces for small/local models. Triggered by the `providerLikelyNeedsChunking` flag in `lib/ai-config.ts`. Per-lens prompts are generated against each chunk and merged.
+**Chunking.** Splitting a long policy into ~12 KB pieces for small/local models. Triggered by the `providerLikelyNeedsChunking` flag in `lib/ai-config.ts`. Per-lens prompts are generated against each chunk and merged. One summary makes at most 120 chunk calls, over text a fetch has already cut to 300,000 characters; a text that would need more is refused before the first call.
 
 **AI debug log.** Append-only diagnostic table showing every AI call's provider, model, prompt size, response status, and timing. Off unless *Record AI prompts and responses* is enabled. Inspectable from **Settings → Admin → Developer Options** or `GET /api/ai/debug-log`.
 
@@ -107,4 +107,4 @@ A short reference for terms that show up across the app, the API, and the codeba
 
 **Standalone build.** The output of `npm run build:standalone` (with `BUILD_STANDALONE=1` set). Self-contained Next.js bundle suitable for the sidecar or any external runtime.
 
-**Admin token.** Optional shared secret (`AUDITOR_ADMIN_TOKEN`) that gates destructive routes when set, plus a list of sensitive read prefixes once the instance is network-exposed. Sent as the `X-Auditor-Admin-Token` header or the `pt_admin_token` cookie. Verified with `crypto.timingSafeEqual`. Failed attempts log to `audit_log` as `admin_token.login.invalid`.
+**Admin token.** Optional shared secret (`AUDITOR_ADMIN_TOKEN`) that gates destructive routes when set, plus a list of sensitive read prefixes once the instance is network-exposed. Sent as the `X-Auditor-Admin-Token` header (the raw token) or the `pt_admin_token` cookie, whose value is an HMAC of the token under a secret the server mints once per process, so it stops working at a restart or a token rotation. Verified with `crypto.timingSafeEqual`. Failed attempts log to `audit_log` as `admin_token.login.invalid`.

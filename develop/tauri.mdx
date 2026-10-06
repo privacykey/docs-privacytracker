@@ -49,10 +49,15 @@ From the first release on the Rust backend there is no second process. When `pri
   <Step title="The server starts inside the app">
     `src-tauri/src/embedded.rs` starts the server on that listener, in the app's own process. It opens and migrates `privacy.db`, starts the scheduled jobs, and serves the frontend from `Contents/Resources/site`, read-only inside the signed bundle. Nothing is extracted into the data directory.
 
-    The server doesn't read the app's environment. The shell hands it a fixed set of variables, such as the data directory, a loopback bind and `PRIVACYTRACKER_RUNTIME=desktop`, and never an admin token, much as the sidecar starts Node from a cleared environment. Nothing in the app's own environment changes who may call the API.
+    The server doesn't read the app's environment. The shell hands it a fixed set of variables, such as the data directory, a loopback bind, `PRIVACYTRACKER_RUNTIME=desktop` and the launch credential described next, and never an admin token, much as the sidecar starts Node from a cleared environment. Nothing in the app's own environment changes who may call the API.
   </Step>
-  <Step title="The WebView loads the app">
-    There's nothing to wait for: the listener is bound and the server is ready before the window loads `http://127.0.0.1:<port>/`.
+  <Step title="The server answers `/api` only to this launch">
+    A loopback bind keeps the network out but not other processes on the Mac, so the shell mints 32 random bytes per launch and passes them to the server as `PRIVACYTRACKER_DESKTOP_TOKEN`. While that is set, every `/api/*` request, public reads and `/api/csp-report` included, is refused with 401 `Desktop credential required` unless it carries the credential in the `X-PrivacyTracker-Desktop-Token` header or the `pt_desktop_session` cookie. Page shells stay public. The credential is deliberately not an admin token: `/api/auth/admin-token/status` still answers `configured: false`, so the desktop never shows the login page or the unlock card.
+
+    Same-user tools such as the MCP companion read the credential from `.desktop-token` in the data directory (mode 0600, rewritten every launch and removed on a clean exit) and the port from `.desktop-port`, and send the header.
+  </Step>
+  <Step title="The WebView loads the app through a one-time link">
+    There's nothing to wait for: the listener is bound and the server is ready before the window loads. It does not load `http://127.0.0.1:<port>/` directly, because the page would have no credential. `backend::entry_url` issues a nonce and the window opens `/api/desktop/bootstrap?nonce=…`, which the server answers once, within 60 seconds, with the `pt_desktop_session` cookie (`HttpOnly; SameSite=Strict; Path=/api`) and a 303 to `/`. Reloads, deep links and same-origin navigations keep the cookie; anything that points a webview at the server afresh needs a new link.
   </Step>
   <Step title="Quitting stops the server">
     `Cmd-Q`, tray Quit, menu-bar Quit and updater restart all route through `RunEvent::ExitRequested`. The server stops accepting connections and ends its scheduled jobs, and requests in flight get up to **3 seconds**, the grace the sidecar gets between SIGTERM and SIGKILL. A bulk run cut off there resumes on the next launch, as it does after a crash.
@@ -71,9 +76,11 @@ Releases before the Rust backend run the server as a separate Node process, the 
   </Step>
   <Step title="Tauri spawns Node with that port in env">
     The bundled Node binary (`src-tauri/binaries/node-<arch>`) runs the standalone Next.js bundle (`server.js`) with `PORT=<that-port>` and `HOSTNAME=127.0.0.1`. The bundle binds to localhost only — no external network exposure.
+
+    The sidecar gets the same launch credential as the Rust backend: `sidecar.rs` mints it and passes it as `PRIVACYTRACKER_DESKTOP_TOKEN`, and `lib/desktop-auth.ts` in `proxy.ts` refuses every `/api` request without it. A separate process cannot share the shell's memory, so the nonce for the window's single bootstrap link travels in the environment too, as `PRIVACYTRACKER_DESKTOP_BOOTSTRAP_NONCE`, and the proxy redeems it once within 60 seconds of first looking at a link. The credential is written to `.desktop-token` and the port to `.desktop-port`, as on the Rust backend.
   </Step>
   <Step title="Tauri waits for the sidecar to answer">
-    `sidecar::wait_until_ready` polls `http://127.0.0.1:<port>/api/apps` every 250 ms with a 2-second per-request timeout, and treats any response with status < 500 as ready — it never parses the body. The overall deadline is `READY_TIMEOUT`, **60 seconds** (the in-source comment records the bump from 30s: standalone-tree extraction takes 5–10s on a slow disk, and Next.js compiles the route on first hit). Once a probe succeeds, the WebView loads `http://127.0.0.1:<port>/` and the user sees the dashboard.
+    `sidecar::wait_until_ready` polls `http://127.0.0.1:<port>/api/apps` every 250 ms with a 2-second per-request timeout, and treats any response with status < 500 as ready — it never parses the body. The overall deadline is `READY_TIMEOUT`, **60 seconds** (the in-source comment records the bump from 30s: standalone-tree extraction takes 5–10s on a slow disk, and Next.js compiles the route on first hit). The probe goes through `backend::get`, which attaches the credential, so the gate above does not read as a failed boot. Once a probe succeeds, the WebView opens the one-time `/api/desktop/bootstrap` link, lands on `/` with the session cookie set, and the user sees the dashboard.
 
     `/api/ready` exists, but nothing in the Tauri shell uses it — it's the Docker/compose healthcheck and the smoke-test probe. It answers `{ status: "ready" | "not_ready", checks }`, not `{ ok: true }`.
   </Step>
@@ -173,7 +180,8 @@ The updater has no opt-out switch — the plugin is registered unconditionally i
 ├── privacy.db-shm                     shared-memory file
 ├── backup-signing.key                 per-install HMAC key for backup bundles (0600)
 ├── backups/                           server-local rolling snapshots (Settings → Backup)
-└── .desktop-port                      the port to try first at the next launch
+├── .desktop-port                      the port to try first at the next launch
+└── .desktop-token                     this launch's credential for /api (0600; removed on a clean exit)
 ```
 
 This is the directory the sidecar releases use, and the Rust backend keeps the database in the same format. Either build opens what the other left behind, WAL included, which is what makes a rollback from the Rust backend to a Node build safe.
@@ -216,7 +224,7 @@ Three call sites today:
 2. **Enabling "Require unlock"** in Desktop settings — confirms the user before persisting `require_unlock`. Note the gate on window reveal isn't implemented yet: `reveal_main_window` always reveals immediately and defers the lock overlay to the webview, which doesn't draw one.
 3. **The "Test Touch ID" button** in Desktop settings.
 
-`POST /api/reset` involves neither. `SettingsView.resetAllData()` is a bare `fetch("/api/reset", { method: "POST" })` with no headers — the route is protected by the same-origin proxy check, a 30-per-10-minutes rate limit, and the admin token when one is required, returning 401 otherwise. The admin token reaches the server as the `pt_admin_token` cookie the user establishes through `/api/auth/admin-token/login`; the Rust side never reads it from the environment and never injects it.
+`POST /api/reset` involves neither. `SettingsView.resetAllData()` is a bare `fetch("/api/reset", { method: "POST" })` with no headers — the route is protected by the same-origin proxy check, a 30-per-10-minutes rate limit, and the admin token when one is required, returning 401 otherwise. The admin token reaches the server as the `pt_admin_token` cookie the user establishes through `/api/auth/admin-token/login`; the Rust side never reads it from the environment and never injects it. On the desktop the browser also sends the `pt_desktop_session` cookie with that bare `fetch`, and without it the server refuses the request with 401 before any of those checks run (see [The Rust backend](#the-rust-backend)).
 
 Touch ID is also deliberately *not* used to derive backup-encryption keys — bundles have to stay portable to the web build and to other machines.
 

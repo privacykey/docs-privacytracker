@@ -113,6 +113,8 @@ python3 scripts/ios-app-import/export_ios_apps.py --mode device
 
 You can run the helper from the source repo even when the rest of privacytracker is installed as a desktop app or Docker container — its output is just a text file the web onboarding accepts.
 
+The `.csv` is written for spreadsheets as much as for the importer: every field is quoted, and a cell that starts with `=`, `+`, `-` or `@` (or their full-width forms) gets a leading tab, so an app name chosen by a developer is never run as a formula when you open the file in Excel or Numbers. The onboarding importer trims that tab away again.
+
 ## Behind a reverse proxy
 
 For trusted-LAN deployments the project ships working Compose stacks in the repo checkout — you don't need to write a proxy config from scratch:
@@ -131,7 +133,7 @@ Three rules apply here, and the samples only cover the first. privacytracker enf
 
 The second one is yours to add. privacytracker only honours `X-Forwarded-For` / `X-Forwarded-Host` when `PRIVACYTRACKER_TRUST_PROXY` is set, and neither `.env.example` carries it, nor do the sample `compose.yaml` files pass it into the app container. Until you add it to the `privacytracker` service's `environment:` block yourself — the root `docker-compose.yml` documents the variable inline — rate-limit keys and `audit_log.actor_ip` collapse to the literal `local`, meaning one shared rate-limit bucket per route and no usable client IP in the audit trail. See [Hardening → TLS via reverse proxy](/hardening#tls-via-reverse-proxy) for the threat-model walkthrough.
 
-The third one is what actually breaks the deployment, and it is also yours to add. `proxy.ts` rejects every request whose `Host` isn't allowlisted — `GET` included, before any other gate — with 400 `{"error":"Host not allowed"}`, and the default allowlist is loopback only. Neither sample passes `PRIVACYTRACKER_ALLOWED_HOSTS` into the app container and neither `.env.example` mentions it; the stacks work out of the box only because `PRIVACYTRACKER_HOST` defaults to `privacytracker.localhost` and `*.localhost` is treated as loopback. The moment you follow the `.env.example` comment and set a LAN DNS name, mDNS name, or a real domain, every request 400s until you add that same name to `PRIVACYTRACKER_ALLOWED_HOSTS` in the `privacytracker` service's `environment:` block.
+The third one is what actually breaks a deployment when it is missing. `proxy.ts` rejects every request whose `Host` isn't allowlisted, `GET` included and before any other gate, with 400 `{"error":"Host not allowed"}`, and the built-in allowlist is loopback only: `localhost` itself, `127.x` and `::1`. A `.localhost` name is not loopback. `privacytracker.localhost` is an ordinary hostname to privacytracker and has to be listed like any other, which is why both sample stacks pass `PRIVACYTRACKER_HOST` through to `PRIVACYTRACKER_ALLOWED_HOSTS` in the `privacytracker` service's `environment:` block. Keep that line when you adapt them: the name you set in `.env`, a LAN DNS name, an mDNS name or a real domain, is allowed through it, and any other name you reach the app by needs adding there or every request 400s. Listing a non-loopback name also makes the instance network-exposed, which is why both `.env.example` files require `AUDITOR_ADMIN_TOKEN`.
 
 ## Verify the install
 
