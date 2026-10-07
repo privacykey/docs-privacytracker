@@ -11,8 +11,150 @@ This page mirrors [`CHANGELOG.md`](https://github.com/privacykey/privacytracker/
 
 ## [Unreleased]
 
+### Security
+
+- Raise `sharp` to 0.35.5 (GHSA-wq5f-xc86-pv6w, a vulnerability in the
+  librsvg bundled with its libvips, CVE-2026-96889), which reaches the app
+  through Next.js. Only the Docker image's Node rollback (`BACKEND=node`)
+  carries it at runtime; the default Rust image and the desktop app ship no
+  Node.
+- Raise `postcss-selector-parser` to 7.1.6 (GHSA-rj75-hqrm-r3gf, CPU
+  exhaustion through quadratic selector parsing) in Storybook's CSS
+  tooling. Development only.
+
+## [0.3.0] — 2026-10-06
+
+The first release since v0.1.2, and the first on the Rust server: neither
+the desktop app nor the Docker image runs Node any more. It also brings
+a device picker that knows whose device is whose, privacy-label history
+back to 2021, a dashboard that follows your goals, plain explanations of
+what each label means, sign-in for Docker, a locked-down desktop app,
+pairing for the iPhone companion app and a long list of fixes. v0.2.0 was prepared
+but never released; its changes are part of this release and listed
+below.
+
+### Before you upgrade
+
+- **Back up first.** Quit the app or stop the container, then copy the
+  whole data directory: `~/Library/Application Support/privacytracker/`
+  for the desktop app, or the `privacytracker-data` volume for Docker
+  (`docker compose cp web:/app/data ./privacytracker-backup`).
+- **macOS 13.5 or later.** v0.1.2 cannot update itself to this release.
+  Install the new DMG, or run `brew upgrade --cask privacytracker`, once;
+  in-app updates carry on from there.
+- **Docker needs an access token.** Set `AUDITOR_ADMIN_TOKEN` in `.env`
+  before you start it (for example `openssl rand -hex 32`). Compose will
+  not start without it, even with the port published on localhost only,
+  and it is what you sign in with. The `latest` image tag now means the
+  newest release, not the newest change on `main`.
+- **Tools that talk to the desktop app.** The app's local server now
+  refuses requests without a credential that changes every launch. A tool
+  you run yourself, such as an MCP server, reads it from `.desktop-token`
+  in the app's data directory and sends it in an
+  `X-PrivacyTracker-Desktop-Token` header.
+- **Older backups.** Backups made by v0.1.2 restore, but they never
+  included devices, review history or activity, so those cannot come back
+  from one. Keep the directory copy for a rollback.
+
+### Highlights
+
+- **No more Node.** The desktop app serves itself from its own process:
+  about 9 MB of frontend inside the app, where the Node build unpacked a
+  ~200 MB server into your data folder, and a fraction of the memory. The
+  Docker image is about 56 MB, down from 1.36 GB. Your data is untouched,
+  and settings kept in the page, such as the accessibility quick toggles,
+  now survive a relaunch.
+- **Whose device is this?** Choose whose apps you are looking at from the
+  navigation bar, and record who each device belongs to; importing from a
+  new device asks. On the desktop app, removing apps from a device that
+  belongs to someone you help is now possible, once you have recorded that
+  it is theirs, confirmed you have their permission and switched into the
+  matching mode.
+- **Label history back to 2021.** The Wayback import now reaches captures
+  from early 2021, each app's History tab can check the archive for that
+  app alone, and the History tab pages back through older entries.
+- **What a label means.** Each category on an app's Privacy labels tab
+  now has a short, clearly marked example of what that label can mean in
+  practice; turn the examples off under Settings → Your focus. "Data Not
+  Collected" is shown as the developer's own claim, like every other
+  label, not as a pass.
+- **A dashboard that follows your goals.** The cards reorder when you
+  change your goals, unless you turn on "Keep layout fixed". The overview
+  is shorter and lists the decisions you still have in progress, and you
+  can keep an app while accepting its current concern, or come back to it
+  in 1, 7 or 30 days. With Keep it simple on, the longer lists wait behind
+  Show more detail.
+- **How much to trust a label.** With the Monitor goal, each app's
+  Privacy Labels tab shows reasons to read its label with care: how long
+  it has gone unchanged, the known weakness of "Data Not Collected", and
+  where the privacy policy describes more than the label admits.
+- **A locked-down desktop app.** The app's local server needs a
+  credential that changes every launch, so other user accounts on the Mac
+  can no longer read your data through it. "Require Touch ID to open the
+  window" now applies every time the window opens, an update installs only
+  if the version inside its signed download is newer than yours, and start
+  at login now uses a LaunchAgent, which needs no extra permission.
+- **Safer by default.** Docker and network installs require sign-in for
+  everything private and limit repeated wrong sign-in attempts, the
+  database is readable only by you, request sizes are limited, CSV exports
+  are safe to open in a spreadsheet, pages run under a strict Content
+  Security Policy, and outbound requests check the addresses they connect
+  to.
+- **Screenshot import on your device.** The text reader now ships inside
+  the app, so reading app names from screenshots downloads nothing from
+  anywhere else and the images never leave your device.
+- **iPhone companion pairing.** Settings → Companion pairs the
+  privacytracker iPhone app with read-only access to your app list, labels
+  and history. On the desktop app, phone connections over Wi-Fi stay off
+  until you turn them on.
+- **Settings in four pages and a simpler first run.** Choosing the Monitor
+  goal turns on daily sync, and "Delete all data" now removes everything,
+  including devices and saved backups, once you type a confirmation.
+  Privacy-policy changes no longer notify you by default; the History tab
+  still records them.
+- **Accessibility.** Colour contrast meets WCAG AA across the app, links in
+  running text are underlined, charts and the compare view work with
+  screen readers, keyboard access works in the phone-width menu and the
+  import steps, and each app's Accessibility tab is back.
+- **Fixes** to AI policy summaries, background tasks and recovery after a
+  crash, the dashboard, onboarding, and the desktop app's menu bar actions
+  and update banner.
+
+### Going back
+
+Both servers open the same data. For this release the Node builds are
+still available: Docker Compose builds the Node image with
+`PRIVACYTRACKER_BACKEND=node` in `.env`, and a desktop rollback would come
+as a new patch release. The next release removes them.
+
+Every change since v0.1.2 is listed in
+[CHANGELOG.md](https://github.com/privacykey/privacytracker/blob/main/CHANGELOG.md).
+
+[//]: # (release-notes-end)
+
 ### Focus and dashboard
 
+- The check-up no longer offers "See what your apps collect" to the child
+  audience, whose focus switches the Privacy Map off. The step used to open a
+  page that does not exist for them.
+- The **Minimal** layout preset is now **Simple**, and shows what the simple
+  view leads with: the review banner, the overview and "Changes to review". It
+  used to list the risk list and the at-a-glance numbers, which Keep it simple
+  folds and hides.
+- With **Keep it simple** on, the dashboard folds its three long lists (the
+  risk list, "Consider replacing" and stale apps) behind **Show more detail**
+  at the bottom of the page. One click opens them for the visit; turning
+  Keep it simple off brings them back for good.
+- Shorten the dashboard overview. It lists the decisions you still have in
+  progress, and **Show apps with unreviewed changes** opens the changed apps in
+  place instead of listing them twice. The overview says how many apps are
+  stale next to **Re-sync now**, and the note about "since last visit" appears
+  only with a count.
+- Say "Top 6 of 69 apps" when the risk list is a slice, show the top three under
+  "Consider replacing", show "Security hygiene" only when both Monitor and
+  Cleanup are selected, and collapse a finished check-up even while optional
+  extras remain. The risk list no longer says "you" when the apps belong to
+  someone else or a child.
 - Keep the dashboard's "since last visit" comparison steady through app review,
   navigation and refreshes in the same browser tab, separately for each device
   view. Due reminders now say "Ready to review" and link directly to the
@@ -31,13 +173,102 @@ This page mirrors [`CHANGELOG.md`](https://github.com/privacykey/privacytracker/
 
 ### Security
 
+- The desktop app's Node rollback build now protects its local server the
+  way the Rust build does: the shell mints a credential at every launch, the
+  server refuses any `/api` call without it, and the window receives it as an
+  HttpOnly cookie through a one-time link, so another account on the same Mac
+  can no longer read or drive the install over its loopback port. Nothing
+  changes for the web and Docker deployments.
+- The admin session cookie no longer carries `AUDITOR_ADMIN_TOKEN` itself. Login
+  stores a value derived from the token under a secret minted at each start, so
+  a cookie that reaches another service on the same host (browsers scope cookies
+  by host, not by port) does not disclose the token, and a restart or a token
+  rotation signs every browser out. Both backends also try every
+  `pt_admin_token` cookie a request carries, so a cookie planted by a sibling
+  service can no longer shadow the real one and lock you out of every private
+  page; a cookie carrying the token itself keeps working.
+- A hostname under `.localhost` is no longer treated as loopback by the host
+  allowlist on either backend. Where a resolver sends such a name is up to it,
+  so a token-less install on loopback now refuses a page that rebinds one to
+  127.0.0.1, as it refuses any other unknown host. The Caddy and Traefik
+  overlays already list `privacytracker.localhost` in
+  `PRIVACYTRACKER_ALLOWED_HOSTS`; a hand-rolled setup that relied on the old
+  rule needs the same entry, and the admin token that comes with it.
+- The iOS app-list helper (`scripts/ios-app-import/export_ios_apps.py`) quotes
+  every CSV field and prefixes a tab to a name that a spreadsheet would read as
+  a formula, so an app named like `=HYPERLINK(...)` opens as text.
+- Reading a fetched privacy-policy page into text, and splitting that text
+  into chunks for the AI summariser, now take time proportional to the size
+  of the page on both backends. A page shaped to make the former
+  regular-expression passes backtrack could hold up the server for seconds
+  per megabyte during the automatic policy fetch that follows an import or
+  sync. The text produced is unchanged.
+- Bound what one privacy policy can cost. A fetch keeps at most 300,000
+  characters of a policy's text, one summary makes at most 120 chunk calls to
+  the AI provider, and pressing Stop or closing the tab on a running summary
+  now stops it at its next provider call instead of only hiding its progress.
+  Each app keeps its newest 20 policy versions and no more than 8 MiB of their
+  text, so a page that changes on every fetch can no longer grow the install's
+  backup past the size a restore accepts. The Internet Archive is asked to save
+  a policy only when no copy from the last 45 days is known, and the privacy
+  disclosure now says so.
 - Replace manual network-interface pointer traversal with an owning Rust
   iterator when finding addresses for paired phones.
 - Patch Next.js, DOMPurify and affected build-tool dependencies. The Linux
   desktop's upstream GLib iterator warning and Storybook's elliptic warning
   remain tracked in [Dependency security](https://github.com/privacykey/privacytracker/blob/main/docs/DEPENDENCY-SECURITY.md).
+- Raise `source-map-js` to 1.2.2 (GHSA-68fv-2mgg-jv7q, an event-loop denial
+  of service in source-map parsing), which reaches the app through
+  Next.js's `postcss`.
 
 ### Added
+
+- The notification bell says what each row is about (privacy labels, privacy
+  policy, app update, accessibility, import and so on), clears every
+  notification in two clicks with **Clear all**, and mutes a notification type
+  in place with **Mute…**, the same switches as Settings → Notifications. The
+  device menu in the top bar ends with a **Manage devices** link.
+
+- App detail pages now explain what a privacy label *means*, not just what
+  it is called. Every category card on the Privacy labels tab gains the
+  vignette hint (the ✦ trigger next to the existing ⓘ), playing the short
+  animated story for that category at **this app's declared tier** — the
+  severity comes from the accordion the card sits in, so an app that logs
+  Usage Data anonymously shows the anonymised-funnel story while one that
+  uses it to track you shows the 11pm re-engagement push. The 14 × 3
+  vignette set already existed but was reachable only from the privacy
+  profile editor in Settings.
+
+- A **Privacy label examples** switch under "Fine-tune features" (Settings,
+  "Your focus", Adjust; and onboarding's Advanced section) turns the ✦
+  examples off for anyone who finds them distracting. The label-scope note
+  links straight to it ("Turn them off in Settings"), landing with the
+  switch focused and highlighted. It writes the same
+  per-feature override as the other switches there, so it wins over the
+  focus rules, and switching it back clears the override. The label caveat
+  and its policy link stay either way.
+
+- A label-scope note above the privacy-label accordions, stating plainly
+  that Apple's labels name a *category* of data rather than the fields
+  inside it, and that only the developer can see that list. (Whether Apple
+  checks a label is left to the trust card above it, so the two don't
+  repeat each other.) It links through to the policy summary's collection-scope
+  lens — the nearest thing the app holds to an actual answer — which now
+  highlights on arrival. The note also points at the ✦ explainers, since
+  the trigger is a single glyph with no other affordance. The caveat and
+  the policy link are deliberately not gated on `flag.global.label_hints`,
+  so the audiences with the animations muted still get them; only the
+  sentence naming the ✦ is gated, so those users are not sent looking for
+  a control that never renders.
+
+- Every vignette popover opens with a "This is an example" lip, in the app's
+  informational blue so it can't be read as a severity tier, and ends with a
+  "Read more about privacy labels" link to that category's entry on the label
+  definitions page. The definitions page gains an anchor per category and
+  scrolls to it once its content mounts: the body renders inside a Suspense
+  boundary, so the browser's own anchor jump fires before the entry exists.
+  Its Back button returns to wherever the link was opened, and now names the
+  settings group routes "Settings" rather than "Dashboard".
 
 - Settings → Companion pairs the privacytracker iPhone app with your
   instance. Choose "Make a pairing code" and scan the QR code with the app.
@@ -75,6 +306,56 @@ This page mirrors [`CHANGELOG.md`](https://github.com/privacykey/privacytracker/
   in-app change alert privacytracker's bell provides.
 
 ### Changed
+
+- App version updates no longer raise a notification unless **App version
+  updates** is on in Settings → Notifications. The new version still shows on
+  the app's page and in the Activity log. When the type is on, the bell and the
+  desktop toast read "Updated from v1 to v2" instead of "1 privacy change
+  detected".
+
+- All 42 vignette captions are rewritten in a conditional voice, so a
+  scenario reads as one possibility rather than a report of what the app in
+  front of you is doing. "Your GPS trail pins your home address" becomes "A
+  GPS trail could pin your home address". 37 in-artwork headings move the
+  same way — "WHAT THE APP DOES" → "WHAT AN APP COULD DO", "WHAT'S STORED" →
+  "WHAT COULD BE STORED", "WHAT THEY LEARN" → "WHAT COULD BE LEARNED" — and
+  the one fabricated street address ("14 Maple St, Apt 3", under a heading
+  claiming it as fact) is replaced with a generic label. The scenes still say
+  what a tier can amount to; they no longer look like they found it.
+
+- Each popover now also states what IS known: "This app has disclosed that it
+  collects `{category}`, not what that includes. Its privacy policy may say
+  more." That replaces an earlier attempt at the same problem — an "Example"
+  chip on the artwork plus a sentence distinguishing the real label from the
+  illustrated scene. Five separate places said "example", and the bubble
+  asked readers to hold a label-versus-scene distinction they had no reason
+  to care about. The popover now says it once, in a lip across the top.
+
+- Plain language for WCAG 2.2 AAA (3.1.3 unusual words, 3.1.4
+  abbreviations): the captions spell out GPS, OS, ID and "misc" ("a
+  location trail", "system version", "advertising identifier",
+  "miscellaneous records"), and replace four technical terms: a
+  "product-analytics funnel" becomes "a tally of how people move through the
+  app", a "session token" becomes "a throwaway code", an "audience segment"
+  becomes "a list of people like you" sold to advertisers, and "aggregate"
+  becomes "overall" or "totals". The zh captions get the same abbreviation
+  and "session token" swaps; the rest of that bundle still waits on
+  Crowdin. Text drawn inside the artwork is unchanged: the caption beside
+  each scene now carries most of the expanded terms.
+
+- NOTE: the zh caption bundle is not updated here. Those strings round-trip
+  through Crowdin, and 10 of the 42 were already describing different
+  scenarios from their English source before this change. zh readers keep the
+  indicative voice until the next translation pull.
+
+- `macos-release.yml` now calls `scripts/fetch-node-sidecar.sh` instead of
+  carrying its own ~40 lines of inline download-and-verify shell. The
+  Node release-key fingerprints had been duplicated between the workflow
+  and (until now) nothing else; they have exactly one home now and cannot
+  drift between CI and a developer's machine. Behaviour is unchanged —
+  same GPG-then-hash verification, same output paths — with the build
+  matrix's target passed through `TAURI_BUILD_TARGET`, the variable
+  `stage-standalone.mjs` already reads when choosing which binary to wrap.
 
 - "Data Not Collected" is shown as the developer's disclosure, like every
   other label, rather than as a pass. Compare no longer paints the slot green
@@ -199,7 +480,81 @@ This page mirrors [`CHANGELOG.md`](https://github.com/privacykey/privacytracker/
   item then shows as done and says auto-sync is on, instead of asking you
   to turn it on. Both servers behave the same.
 
+### Removed
+
+- The desktop app no longer carries a Node runtime, and the Node sidecar
+  build (the way releases up to v0.1.2 ran the app) is gone: no bundled Node
+  binary, no standalone tarball extracted into the data directory, and none
+  of the three hardened-runtime entitlements V8 needed. The app serves
+  itself from the Rust core. An installation upgraded from v0.1.2 is tidied
+  on its first launch, as before.
+
 ### Fixed
+
+- External links open again in the desktop app. The webview has no tabs
+  and dropped every "open in a new tab" link, so the Apple sources on the
+  label definitions page, developer privacy policies and App Store links
+  did nothing when clicked; they now open in your default browser.
+- **Set owner** on Settings → Devices is a proper form: bordered fields side
+  by side, a readable label size and a framed card, instead of a bare text
+  box and a naked drop-down.
+- Re-syncing a device from Settings → Devices no longer offers "Back to
+  your purpose" on the first import step. The link reads "Back to devices"
+  and returns there.
+- The Statistics page lays six summary tiles out as two rows of three
+  instead of five and a straggler, which happened once a privacy profile
+  and accessibility labels were both on.
+
+- `tauri build` (and `just tauri-build`) stopped on macOS 27 with E0463
+  "can't find crate for `ctor_proc_macro`", or the same for another proc
+  macro, or a dlopen error naming one. Under the 13.5 deployment target that
+  `tauri build` sets, stripping debug info left each proc-macro dylib's string
+  table 4-byte aligned, and macOS 27 refuses to load such a dylib. Release
+  builds no longer strip proc macros and build scripts; the app itself is
+  built as before. `tauri dev` was never affected, because debug builds don't
+  strip. The cause is in rustc's strip step, so this is a workaround, tracked
+  in #382. Developer-facing only.
+
+- The vignette popover could only ever work as a tooltip. It closed the
+  instant the pointer left the ✦, a click after hovering toggled it shut
+  instead of pinning it open, and because it is attached at the end of the
+  page it sat outside the Tab order. It now waits 150ms before closing so the
+  pointer can cross into it, a click pins it, and once it has been opened
+  with Enter or a click, Tab moves into it and back out. Tabbing past a ✦
+  still moves straight on, so a row of them costs keyboard users nothing.
+
+- A popover taller than the room on either side of its ✦ ran off the edge of
+  the screen, where it couldn't be scrolled to because it is fixed-position.
+  It is now kept fully on screen, dropping its pointer arrow in the rare case
+  it has to overlap the ✦. When it is taller than the screen itself (a phone
+  held sideways, or a desktop zoomed to 400% as WCAG 1.4.10 Reflow tests),
+  its contents now scroll inside it, and on screens under 520px tall the
+  artwork drops from 180px to 120px so most bubbles fit without scrolling.
+
+- The label explainers now meet WCAG 2.2 AAA where the code can carry it.
+  Text contrast reaches 7:1 in light and dark (1.4.6): the lip, link, caption
+  label and disclosure line in each popover, and the label-scope note, which
+  measured 5.0 to 6.6. They use local colour mixes so the app's palette is
+  untouched. Popover text gets 1.5 line spacing and a wider paragraph gap,
+  and the scope note is capped at 80 characters a line; it ran to about 157
+  on desktop (1.4.8). The ✦ and the Read more link each get a 44×44 pointer
+  target (2.5.5); on the category cards the ✦ moves right so its target sits
+  clear of the ⓘ beside it. When a popover is taller than the room either side
+  of its ✦, it takes the roomier side and scrolls, instead of covering the
+  focused ✦ (focus not obscured, 2.4.11 and 2.4.12), and its scroll box
+  becomes a Tab stop so the keyboard can scroll it. The jump to the
+  collection-scope lens no longer animates when reduced motion is on
+  (2.3.3): a script-driven smooth scroll ignores the global CSS rule.
+  `label-hints.spec.ts` checks contrast, pointer targets, the uncovered
+  trigger and the Tab order.
+
+- The ✦ trigger failed WCAG 2.2 target size (2.5.8): its box was 18×18,
+  with an invisible `::after` supplying the rest, which axe does not count,
+  and the spacing exception cannot apply to a control laid over the
+  category card's link. The box itself is now 24×24, with negative margins
+  keeping inline rows (the profile editor) from reflowing, and on the cards
+  its tap area no longer overlaps the ⓘ beside it. `label-hints.spec.ts`
+  now checks both, since `a11y.spec.ts` scans WCAG 2.1 rules only.
 
 - The app detail page's Accessibility tab appears again. Its flag,
   `flag.detail.a11y.panel`, has three values and defaults to `collapsed`
@@ -1463,12 +1818,9 @@ This page mirrors [`CHANGELOG.md`](https://github.com/privacykey/privacytracker/
 - A fresh install no longer probes its own install date (which equals
   "today" and is already covered by the first live scrape).
 
-## [0.2.0] — 2026-09-05
+### Prepared as 0.2.0 on 2026-09-05, never released
 
-Prepared on this date but never tagged or released. These changes ship
-with v0.3.0, the next release after v0.1.2.
-
-### Added
+#### Added
 
 - Canned sample data now populates every app-detail surface: each demo app
   gets its hand-written AI policy summary stored as a real, ready analysis
@@ -1498,7 +1850,7 @@ with v0.3.0, the next release after v0.1.2.
   machine. The policy itself is now hash-based rather than nonce-based,
   which is what lets every page be served as a fixed, prebuilt file.
 
-### Changed
+#### Changed
 
 - **v0.2 upgrade requirements:** Docker deployments require
   `AUDITOR_ADMIN_TOKEN`, including containers published only on localhost.
@@ -1545,7 +1897,7 @@ with v0.3.0, the next release after v0.1.2.
   first paint waits for the language bundle (a brief blank rather than an
   English flash), and the no-JavaScript fallback message is English only.
 
-### Fixed
+#### Fixed
 
 - Outbound requests now validate the DNS addresses used by the actual connection,
   including streaming AI calls and redirects. IPv4-mapped IPv6 can no longer
@@ -1614,7 +1966,7 @@ with v0.3.0, the next release after v0.1.2.
   `.claude` exclusion at the repo root so `pnpm lint` stops reporting
   "Checked 0 files" there.
 
-### Security
+#### Security
 
 - Refresh the Docker and desktop Node runtime to 24.20.0, require patched Alpine TLS libraries, remove unused package managers from the runtime image, and apply compatible JavaScript/Rust dependency patches. Scan the final image in CI and track desktop runtime/scanner pins with Renovate.
 - Documented in the README that a configured AI provider key is stored in
@@ -1673,7 +2025,8 @@ Next.js app.
 - Background sync with a notifications bell, and crash-safe resume across the
   live, Wayback, and privacy-policy jobs.
 
-[Unreleased]: https://github.com/privacykey/privacytracker/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/privacykey/privacytracker/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/privacykey/privacytracker/compare/v0.1.2...v0.3.0
 [0.1.2]: https://github.com/privacykey/privacytracker/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/privacykey/privacytracker/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/privacykey/privacytracker/releases/tag/v0.1.0
