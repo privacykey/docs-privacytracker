@@ -177,9 +177,5 @@
   },
   "metadata": {
     "robots": "index, follow"
-  },
-  "fonts": {
-    "heading": { "family": "Inter" },
-    "body": { "family": "Inter" }
   }
 }
